@@ -1,0 +1,13 @@
+{
+  "name": "grok-plugin-cc",
+  "owner": {
+    "name": "Trevor Spencer"
+  },
+  "plugins": [
+    {
+      "name": "grok",
+      "description": "Unofficial Grok Build CLI in Claude Code — /grok:* commands + a Grok-backed MCP server (grok_search, grok_ask).",
+      "source": "./"
+    }
+  ]
+}

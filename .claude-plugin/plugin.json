@@ -1,0 +1,10 @@
+{
+  "name": "grok",
+  "version": "0.1.0",
+  "description": "Unofficial Grok Build CLI in Claude Code — /grok:* commands + Grok MCP server",
+  "author": {
+    "name": "Trevor Spencer"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/trevoraspencer/grok-plugin-cc"
+}

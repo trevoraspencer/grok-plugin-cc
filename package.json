@@ -1,0 +1,24 @@
+{
+  "name": "grok-plugin-cc",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Unofficial Grok Build CLI plugin for Claude Code (dev scripts only; no runtime dependencies)",
+  "license": "MIT",
+  "author": "Trevor Spencer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trevoraspencer/grok-plugin-cc.git"
+  },
+  "homepage": "https://github.com/trevoraspencer/grok-plugin-cc#readme",
+  "bugs": {
+    "url": "https://github.com/trevoraspencer/grok-plugin-cc/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "check": "find scripts tests -name '*.mjs' -exec node --check {} \\;",
+    "test": "node --test"
+  }
+}

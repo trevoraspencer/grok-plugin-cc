@@ -1,0 +1,15 @@
+# Supergoal planning artifacts (this run's scratch — not part of the plugin)
+.supergoal/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Local scratch / editor / OS cruft
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Local plugin config override (machine-specific)
+.grok/grok-plugin.json
