@@ -1,8 +1,8 @@
 # VISION.md — trevoraspencer/grok-plugin-cc
 
-> **Status:** living document · **Trajectory:** personal first, public-ready · **License:** [MIT](LICENSE)
+> **Status:** living document · **Trajectory:** public release (v0.1.0, MIT) · **License:** [MIT](LICENSE)
 > **Disclaimer:** Unofficial. Not affiliated with or endorsed by xAI. "Grok" and "Grok Build" are xAI's.
-> **Implementation:** v1 shipped 2026-06-14 — see [README.md](README.md) for usage. Deviations from this design doc, by intent: commands live under `commands/` (not `skills/`); a **two-model** config is used (`default_model` = `grok-composer-2.5-fast` for review, `search_model` = `grok-build` for ask/search, since Composer searches unreliably); `hooks/` and `agents/` are not part of v1.
+> **Implementation:** v1 shipped 2026-06-14 and open-sourced under [MIT](LICENSE) on GitHub (2026-06-15) — see [README.md](README.md) for install. Deviations from this design doc, by intent: commands live under `commands/` (not `skills/`); a **two-model** config is used (`default_model` = `grok-composer-2.5-fast` for review, `search_model` = `grok-build` for ask/search, since Composer searches unreliably); `hooks/` and `agents/` are not part of v1.
 
 ## Executive Summary
 
@@ -33,7 +33,7 @@ Four motivations, in MVP priority order:
 - A Codex-style persistent **app-server** or heavy **job registry** (Grok has no app-server to mirror).
 - **Stateful/resumable** Grok sessions — interactions are stateless one-shot by design.
 - Writing **result artifacts to disk** — output is rendered inline.
-- Public marketplace **distribution** as a launch goal (structured to allow it later, not chasing it now).
+- A curated **plugin-marketplace listing** as a launch goal — the plugin is open-source on GitHub (MIT) and installs straight from the repo, but a third-party/official marketplace listing is still not chased.
 - `rescue`/delegation, deep `research`, `adversarial-review`, image/video (`imagine`) — all **phase 2**.
 
 ## Architecture
@@ -109,10 +109,10 @@ grok-plugin-cc/
 
 ## Distribution & Install
 
-Personal in origin, but laid out and licensed ([MIT](LICENSE)) for public release.
+Personal in origin; **publicly released under [MIT](LICENSE)** on GitHub at [trevoraspencer/grok-plugin-cc](https://github.com/trevoraspencer/grok-plugin-cc).
 
 1. **Install Grok Build:** `curl -fsSL https://x.ai/cli/install.sh | bash`; set `XAI_API_KEY` or sign in.
-2. **Install the plugin (local):** `/plugin marketplace add ./grok-plugin-cc` then `/plugin install grok@grok-plugin-cc`. (For a one-session try: `claude --plugin-dir ./grok-plugin-cc`. There is no bare `/plugin install <path>`.)
+2. **Install the plugin:** `/plugin marketplace add trevoraspencer/grok-plugin-cc` then `/plugin install grok@grok-plugin-cc`. (To fork: `git clone` then `/plugin marketplace add ./grok-plugin-cc`. One-session try from a clone: `claude --plugin-dir ./grok-plugin-cc`. There is no bare `/plugin install <path>`.)
 
 ## Success Criteria (v1)
 
