@@ -114,10 +114,14 @@ No runtime dependencies. Dev scripts (Node's built-in tooling only):
 
 ```bash
 npm run check   # node --check on every .mjs
+npm run eval    # full local eval harness with composite score
+npm run bench   # deterministic dispatcher-only benchmark
 npm test        # node --test (unit suite, no live CLI calls)
 ```
 
 `ask` and `review` accept `--print-args`: it prints the exact `grok` argv that *would* be sent and exits without calling grok — a dry-run for debugging model and flag resolution.
+
+The eval and benchmark helpers are offline by design. They exercise Node syntax, unit tests, command dry-runs, MCP handshake behavior, metadata, and dispatcher latency without making live Grok or web-search calls.
 
 ## Roadmap (phase 2, deferred)
 
