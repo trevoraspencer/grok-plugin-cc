@@ -1,8 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { parseArgs, splitRawArgumentString } from "../scripts/lib/args.mjs";
-import { resolveModel, loadConfig } from "../scripts/lib/config.mjs";
+import { resolveModel, loadConfig, normalizeConfig } from "../scripts/lib/config.mjs";
 import { buildGrokArgs, parseGrokJson, classifyGrokOutput } from "../scripts/lib/grok.mjs";
 import { renderResult, truncate } from "../scripts/lib/render.mjs";
 
@@ -51,6 +54,54 @@ test("config: no_auto_update is NOT an advertised knob (--no-auto-update is alwa
   assert.equal("no_auto_update" in loadConfig(), false);
   // and buildGrokArgs always emits it
   assert.ok(buildGrokArgs({ prompt: "x", model: "m" }).includes("--no-auto-update"));
+});
+
+test("config: normalizeConfig keeps valid local overrides and drops unknown keys", () => {
+  const config = normalizeConfig({
+    default_model: " custom-default ",
+    search_model: " custom-search ",
+    fallback_model: " custom-fallback ",
+    safety: "preview",
+    web_search: false,
+    max_turns: 4,
+    no_auto_update: false
+  });
+  assert.equal(config.default_model, "custom-default");
+  assert.equal(config.search_model, "custom-search");
+  assert.equal(config.fallback_model, "custom-fallback");
+  assert.equal(config.safety, "preview");
+  assert.equal(config.web_search, false);
+  assert.equal(config.max_turns, 4);
+  assert.equal("no_auto_update" in config, false);
+});
+
+test("config: invalid local overrides fall back to shipped defaults", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-config-"));
+  try {
+    fs.mkdirSync(path.join(dir, ".grok"));
+    fs.writeFileSync(
+      path.join(dir, ".grok", "grok-plugin.json"),
+      JSON.stringify({
+        default_model: " local-default ",
+        search_model: "",
+        fallback_model: 42,
+        safety: "dangerous",
+        web_search: "false",
+        max_turns: "10",
+        no_auto_update: false
+      })
+    );
+    const config = loadConfig({ cwd: dir });
+    assert.equal(config.default_model, "local-default");
+    assert.equal(config.search_model, "grok-build");
+    assert.equal(config.fallback_model, "grok-build");
+    assert.equal(config.safety, "permissive");
+    assert.equal(config.web_search, true);
+    assert.equal(config.max_turns, null);
+    assert.equal("no_auto_update" in config, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("grok: buildGrokArgs yields the basic-ask shape", () => {
