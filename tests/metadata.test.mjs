@@ -87,3 +87,28 @@ test("metadata: eval harness tracks mandatory gates and composite formula", () =
   assert.ok(harness.includes("mandatory_metadata_json"));
   assert.ok(harness.includes("testCount / 90"));
 });
+
+test("metadata: autoresearch log remains valid JSONL for the GPT-only rerun", () => {
+  const entries = readText("auto/autoresearch.jsonl")
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  const setupIndex = entries.findIndex((entry) => entry.hypothesis === "Start GPT-only rerun without Grok Build consultation.");
+
+  assert.ok(setupIndex >= 0, "expected GPT-only setup entry");
+  for (const entry of entries.slice(setupIndex)) {
+    assert.match(entry.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    assert.ok(Array.isArray(entry.checks));
+    assert.notEqual(entry.event, "research-fallback");
+  }
+});
+
+test("metadata: active autoresearch manual forbids Grok consultation in this rerun", () => {
+  const manual = readText("auto/autoresearch.md");
+  const activeSection = manual.split("### Active Rerun: Codex-Only")[1].split("### Previous Run: Grok Attempt")[0];
+
+  assert.ok(activeSection.includes("do not invoke Grok Build"));
+  assert.ok(activeSection.includes("Do not run `node scripts/grok.mjs ask ...`"));
+  assert.ok(activeSection.includes("Using Codex GPT-only xhigh:"));
+  assert.ok(activeSection.includes("no `research-fallback` entry unless a non-Grok local command unexpectedly fails"));
+});
