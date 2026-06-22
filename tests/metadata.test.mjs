@@ -130,3 +130,32 @@ test("metadata: release checklist preserves packaging and install gates", () => 
   assert.ok(checklist.includes('Confirm `.mcp.json` references `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs`.'));
   assert.ok(checklist.includes("Confirm `README.md` install instructions mention both GitHub marketplace install and local clone install."));
 });
+
+test("metadata: benchmark cases cover ask, review, and setup dispatcher paths", () => {
+  const benchmark = readText("auto/benchmark.mjs");
+
+  assert.ok(benchmark.includes('id: "ask_print_args_no_search"'));
+  assert.ok(benchmark.includes('id: "review_print_args_empty_branch_diff"'));
+  assert.ok(benchmark.includes('id: "setup_json"'));
+  assert.ok(benchmark.includes('"review"'));
+  assert.ok(benchmark.includes('"--print-args --scope branch --base HEAD"'));
+});
+
+test("metadata: eval harness optional checks cover production-readiness artifacts", () => {
+  const harness = readText("auto/eval-harness.mjs");
+
+  for (const checkId of [
+    "release_checklist",
+    "benchmark_script",
+    "bench_package_script",
+    "readme_eval_docs",
+    "readme_bench_docs",
+    "command_contract_tests",
+    "metadata_tests",
+    "mcp_schema_strict",
+    "config_validation",
+    "config_validation_tests"
+  ]) {
+    assert.ok(harness.includes(checkId), `missing optional check ${checkId}`);
+  }
+});
