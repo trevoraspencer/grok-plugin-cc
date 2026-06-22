@@ -118,7 +118,7 @@ function commandDryRuns() {
         return {
           ok:
             includesAll(parsed.value, ["-p", "--output-format", "json", "--no-auto-update", "--disable-web-search"]) &&
-            parsed.value.some((part) => String(part).includes("READ-ONLY")),
+            parsed.value.some((part) => String(part).includes("Do NOT rewrite")),
           value: parsed.value
         };
       }
