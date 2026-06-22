@@ -81,6 +81,25 @@ Do not use destructive global resets when narrower file-level reversal is possib
 
 ## Research Mandate
 
+### Active Rerun: Codex-Only
+
+For the `autoresearch-gpt55-xhigh-20260622-193805` rerun, do not invoke Grok Build, the Grok CLI, or Grok-backed MCP tools for research, reasoning, or code generation. The user explicitly requested dropping Grok Build and using the Codex session's GPT-only high-reasoning pass instead.
+
+For this rerun:
+
+1. Prefix substantive cycle reasoning with:
+
+   ```text
+   Using Codex GPT-only xhigh:
+   ```
+
+2. Do not run `node scripts/grok.mjs ask ...` as a research step.
+3. Continue to run offline deterministic eval and benchmark commands.
+4. Keep the same ratchet rule: accept only if mandatory gates pass and composite score strictly improves.
+5. Log every cycle in `auto/autoresearch.jsonl` with no `research-fallback` entry unless a non-Grok local command unexpectedly fails.
+
+### Previous Run: Grok Attempt
+
 For heavy reasoning and code generation steps, prefix the reasoning update with:
 
 ```text
