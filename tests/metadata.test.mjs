@@ -112,3 +112,21 @@ test("metadata: active autoresearch manual forbids Grok consultation in this rer
   assert.ok(activeSection.includes("Using Codex GPT-only xhigh:"));
   assert.ok(activeSection.includes("no `research-fallback` entry unless a non-Grok local command unexpectedly fails"));
 });
+
+test("metadata: release checklist preserves safety gates for secrets and live calls", () => {
+  const checklist = readText("auto/release-checklist.md");
+
+  assert.ok(checklist.includes("Confirm no test, eval, or benchmark requires live network access."));
+  assert.ok(checklist.includes("Confirm no code path prints `XAI_API_KEY`, auth file contents, or other secret values."));
+  assert.ok(checklist.includes("Confirm every automated Grok call includes `--no-auto-update`."));
+  assert.ok(checklist.includes("Confirm `/grok:review` still tells the model not to rewrite code or act on findings."));
+});
+
+test("metadata: release checklist preserves packaging and install gates", () => {
+  const checklist = readText("auto/release-checklist.md");
+
+  assert.ok(checklist.includes("Confirm `.claude-plugin/plugin.json` has the intended plugin name"));
+  assert.ok(checklist.includes("Confirm `.claude-plugin/marketplace.json` points the `grok` plugin at `./`."));
+  assert.ok(checklist.includes('Confirm `.mcp.json` references `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs`.'));
+  assert.ok(checklist.includes("Confirm `README.md` install instructions mention both GitHub marketplace install and local clone install."));
+});
