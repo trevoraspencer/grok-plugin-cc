@@ -46,6 +46,14 @@ test("mcp: tools/list returns exactly grok_search and grok_ask with required fie
   assert.equal(TOOLS.length, 2);
 });
 
+test("mcp: tool schemas are strict about declared input properties", async () => {
+  const res = await handleMessage({ jsonrpc: "2.0", id: 20, method: "tools/list" });
+  for (const tool of res.result.tools) {
+    assert.equal(tool.inputSchema.type, "object");
+    assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} should reject unknown fields`);
+  }
+});
+
 test("mcp: notifications/initialized produces no response", async () => {
   const res = await handleMessage({ jsonrpc: "2.0", method: "notifications/initialized" });
   assert.equal(res, null);

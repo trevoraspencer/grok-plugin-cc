@@ -35,7 +35,8 @@ export const TOOLS = [
         query: { type: "string", description: "The question or topic to research with live web search." },
         model: { type: "string", description: "Optional grok model slug to override the default search model." }
       },
-      required: ["query"]
+      required: ["query"],
+      additionalProperties: false
     }
   },
   {
@@ -49,7 +50,8 @@ export const TOOLS = [
         model: { type: "string", description: "Optional grok model slug to override the default." },
         search: { type: "boolean", description: "Whether to allow live web search (default true)." }
       },
-      required: ["prompt"]
+      required: ["prompt"],
+      additionalProperties: false
     }
   }
 ];

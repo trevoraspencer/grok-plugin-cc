@@ -18,7 +18,9 @@
     "node": ">=18"
   },
   "scripts": {
+    "bench": "node auto/benchmark.mjs",
     "check": "find scripts tests -name '*.mjs' -exec node --check {} \\;",
+    "eval": "node auto/eval-harness.mjs",
     "test": "node --test"
   }
 }

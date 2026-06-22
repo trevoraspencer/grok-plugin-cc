@@ -25,6 +25,9 @@ const HARD_DEFAULTS = Object.freeze({
   max_turns: null
 });
 
+const MODEL_KEYS = ["default_model", "search_model", "fallback_model"];
+const SAFETY_MODES = new Set(["permissive", "preview"]);
+
 function readJsonSafe(file) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -35,14 +38,41 @@ function readJsonSafe(file) {
 
 export function loadConfig({ cwd = process.cwd() } = {}) {
   const shipped = readJsonSafe(DEFAULTS_PATH);
-  const base = { ...HARD_DEFAULTS, ...(shipped && typeof shipped === "object" ? shipped : {}) };
+  const base = normalizeConfig(shipped, HARD_DEFAULTS);
 
   const overridePath = path.join(cwd, ".grok", "grok-plugin.json");
   const override = readJsonSafe(overridePath);
   if (override && typeof override === "object" && !Array.isArray(override)) {
-    return { ...base, ...override };
+    return normalizeConfig(override, base);
   }
   return base;
+}
+
+export function normalizeConfig(config, fallback = HARD_DEFAULTS) {
+  const normalized = { ...fallback };
+  const source = config && typeof config === "object" && !Array.isArray(config) ? config : {};
+
+  for (const key of MODEL_KEYS) {
+    if (typeof source[key] === "string" && source[key].trim()) {
+      normalized[key] = source[key].trim();
+    }
+  }
+
+  if (SAFETY_MODES.has(source.safety)) {
+    normalized.safety = source.safety;
+  }
+
+  if (typeof source.web_search === "boolean") {
+    normalized.web_search = source.web_search;
+  }
+
+  if (source.max_turns === null) {
+    normalized.max_turns = null;
+  } else if (Number.isInteger(source.max_turns) && source.max_turns > 0) {
+    normalized.max_turns = source.max_turns;
+  }
+
+  return normalized;
 }
 
 export function resolveModel({ explicit, kind = "default", config = {} } = {}) {

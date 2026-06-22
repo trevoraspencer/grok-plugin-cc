@@ -1,6 +1,11 @@
 # Supergoal planning artifacts (this run's scratch — not part of the plugin)
 .supergoal/
 
+# Autoresearch generated scratch/output (manual + jsonl log stay tracked)
+auto/tmp/
+auto/eval-last.json
+auto/*.tmp
+
 # Node
 node_modules/
 npm-debug.log*
