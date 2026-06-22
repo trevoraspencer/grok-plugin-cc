@@ -55,3 +55,35 @@ test("metadata: release checklist covers gates, docs, versioning, and rollback",
     assert.ok(checklist.includes(heading), `missing ${heading}`);
   }
 });
+
+test("metadata: README documents offline eval and benchmark development flow", () => {
+  const readme = readText("README.md");
+
+  assert.ok(readme.includes("npm run eval"));
+  assert.ok(readme.includes("npm run bench"));
+  assert.ok(readme.includes("node --test"));
+  assert.match(readme, /offline by design/i);
+  assert.match(readme, /without making live Grok or web-search calls/i);
+});
+
+test("metadata: benchmark helper stays deterministic and dispatcher-only", () => {
+  const benchmark = readText("auto/benchmark.mjs");
+
+  assert.ok(benchmark.includes("BENCH_ITERATIONS"));
+  assert.ok(benchmark.includes("--print-args"));
+  assert.ok(benchmark.includes("setup_json"));
+  assert.ok(benchmark.includes("never calls live Grok"));
+  assert.ok(!benchmark.includes("runGrok("));
+});
+
+test("metadata: eval harness tracks mandatory gates and composite formula", () => {
+  const harness = readText("auto/eval-harness.mjs");
+
+  assert.ok(harness.includes("0.40*tests + 0.30*vision + 0.30*robustnessDocsPerformance"));
+  assert.ok(harness.includes("mandatory_npm_test"));
+  assert.ok(harness.includes("mandatory_npm_check"));
+  assert.ok(harness.includes("mandatory_dry_runs"));
+  assert.ok(harness.includes("mandatory_mcp_smoke"));
+  assert.ok(harness.includes("mandatory_metadata_json"));
+  assert.ok(harness.includes("testCount / 90"));
+});
