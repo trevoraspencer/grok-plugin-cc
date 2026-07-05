@@ -40,5 +40,6 @@ Notes:
 - Default scope is `auto`: the working tree if it is dirty, otherwise the branch diff against the detected default base. `--base <ref>` reviews `<ref>...HEAD`. `--scope working-tree|branch` forces the mode.
 - Empty diff → the command prints "Nothing to review." and exits cleanly (not an error).
 - A `--base` ref that doesn't exist, or `--scope branch` with no detectable base, is reported as an error (exit 1) — it will not silently say "Nothing to review."
+- Running outside a git repository is also an error (exit 1), not "Nothing to review."
 - Review uses the configured `default_model` (`grok-composer-2.5-fast`); override with `--model <slug>`.
 - For custom or more adversarial review framing, that is a phase-2 feature (`/grok:adversarial-review`), not yet built.

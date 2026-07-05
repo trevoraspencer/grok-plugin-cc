@@ -69,7 +69,7 @@ Run `/grok:setup` to confirm everything is wired up.
 - `working-tree` — always the uncommitted changes (staged + unstaged + untracked).
 - `branch` — a branch diff; pass `--base <ref>` to pick the base, otherwise the default branch is detected.
 
-An empty diff prints `Nothing to review.` and exits 0. A `--base` ref that doesn't exist — or `--scope branch` when no base can be detected — is reported as an error (exit 1) rather than a misleading "nothing to review".
+An empty diff prints `Nothing to review.` and exits 0. A `--base` ref that doesn't exist — or `--scope branch` when no base can be detected — is reported as an error (exit 1) rather than a misleading "nothing to review". Running the command outside a git repository is likewise an error (exit 1).
 
 ## MCP tools
 

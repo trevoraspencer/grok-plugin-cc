@@ -125,7 +125,14 @@ export function selectReviewTarget({ scope = "auto", base = null } = {}) {
 // Resolve the actual diff text + a human label + whether there's anything to review.
 export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() } = {}) {
   if (!isGitRepo(cwd)) {
-    return { label: "working tree", diff: "", hasChanges: false };
+    // A non-repo cwd is a hard input error, same as a bad --base: reporting
+    // "Nothing to review." here would misleadingly hide the review target.
+    return {
+      label: "working tree",
+      diff: "",
+      hasChanges: false,
+      error: "Not a git repository. Run /grok:review from inside a git repository."
+    };
   }
 
   const target = selectReviewTarget({ scope, base });
