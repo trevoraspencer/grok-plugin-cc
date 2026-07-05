@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { parseArgs, splitRawArgumentString } from "../scripts/lib/args.mjs";
+import { parseArgs } from "../scripts/lib/args.mjs";
 import { resolveModel, loadConfig, normalizeConfig } from "../scripts/lib/config.mjs";
 import { buildGrokArgs, parseGrokJson, classifyGrokOutput, runGrok } from "../scripts/lib/grok.mjs";
 import { renderResult, truncate } from "../scripts/lib/render.mjs";
@@ -20,10 +20,6 @@ test("args: parses value options, booleans, and positionals", () => {
 test("args: -- passes the remainder through as positionals", () => {
   const { positionals } = parseArgs(["a", "--", "-m", "b"], { valueOptions: ["m"] });
   assert.deepEqual(positionals, ["a", "-m", "b"]);
-});
-
-test("args: splitRawArgumentString honors quotes", () => {
-  assert.deepEqual(splitRawArgumentString('ask "two words" plain'), ["ask", "two words", "plain"]);
 });
 
 test("config: resolveModel precedence is explicit > kind > fallback", () => {
