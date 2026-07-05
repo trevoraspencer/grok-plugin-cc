@@ -3,8 +3,8 @@
 //   node scripts/grok.mjs <subcommand> "$ARGUMENTS"
 // where "$ARGUMENTS" is the raw slash-command argument string (one shell token).
 //
-// Subcommands: ask, review (this phase). status/result/cancel/setup are added in
-// later phases. All grok invocation goes through lib/grok.mjs.
+// Subcommands: ask, review, status, result, cancel, setup. All grok invocation
+// goes through lib/grok.mjs.
 
 import process from "node:process";
 import { pathToFileURL } from "node:url";
