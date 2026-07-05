@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { performance } from "node:perf_hooks";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const AUTO_DIR = path.join(ROOT, "auto");
@@ -81,8 +81,11 @@ function includesAll(haystack, needles) {
   return needles.every((needle) => haystack.includes(needle));
 }
 
-function commandDryRuns() {
-  const cases = [
+// Exported for tests. Each case's validate() must FAIL CLOSED: stdout that
+// parses as JSON but has the wrong shape is drift (the exact condition the
+// mandatory_dry_runs release gate exists to catch), never a pass.
+export function dryRunCases() {
+  return [
     {
       id: "ask_explicit_model_no_search",
       args: [
@@ -92,7 +95,8 @@ function commandDryRuns() {
       ],
       validate(result) {
         const parsed = parseJsonStdout(result);
-        if (!parsed.ok || !Array.isArray(parsed.value)) return parsed;
+        if (!parsed.ok) return parsed;
+        if (!Array.isArray(parsed.value)) return { ok: false, error: "expected a JSON argv array" };
         return {
           ok:
             includesAll(parsed.value, [
@@ -114,7 +118,8 @@ function commandDryRuns() {
       args: [path.join(ROOT, "scripts", "grok.mjs"), "review", "--print-args --scope working-tree"],
       validate(result) {
         const parsed = parseJsonStdout(result);
-        if (!parsed.ok || !Array.isArray(parsed.value)) return parsed;
+        if (!parsed.ok) return parsed;
+        if (!Array.isArray(parsed.value)) return { ok: false, error: "expected a JSON argv array" };
         return {
           ok:
             includesAll(parsed.value, ["-p", "--output-format", "json", "--no-auto-update", "--disable-web-search"]) &&
@@ -128,7 +133,8 @@ function commandDryRuns() {
       args: [path.join(ROOT, "scripts", "grok.mjs"), "setup", "--json"],
       validate(result) {
         const parsed = parseJsonStdout(result);
-        if (!parsed.ok || typeof parsed.value !== "object" || parsed.value === null) return parsed;
+        if (!parsed.ok) return parsed;
+        if (typeof parsed.value !== "object" || parsed.value === null) return { ok: false, error: "expected a JSON object" };
         return {
           ok:
             typeof parsed.value.ok === "boolean" &&
@@ -140,8 +146,10 @@ function commandDryRuns() {
       }
     }
   ];
+}
 
-  return cases.map((testCase) => {
+function commandDryRuns() {
+  return dryRunCases().map((testCase) => {
     const commandResult = runCommand(testCase.id, process.execPath, testCase.args, { timeoutMs: 30000 });
     const validation = commandResult.ok ? testCase.validate(commandResult) : { ok: false, error: "command failed" };
     return {
@@ -393,16 +401,24 @@ async function main() {
   process.exitCode = result.mandatoryPass ? 0 : 1;
 }
 
-main().catch((error) => {
-  const result = {
-    timestamp: new Date().toISOString(),
-    cwd: ROOT,
-    mandatoryPass: false,
-    score: { composite: 0, tests: 0, vision: 0, robustnessDocsPerformance: 0 },
-    error: error.message
-  };
-  fs.mkdirSync(AUTO_DIR, { recursive: true });
-  fs.writeFileSync(LAST_RESULT, `${JSON.stringify(result, null, 2)}\n`);
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  process.exitCode = 1;
-});
+// Only run the harness when invoked directly (npm run eval / node auto/eval-harness.mjs);
+// importing this module (e.g. from tests) must not trigger a full — and recursive,
+// since the harness itself runs npm test — evaluation.
+const invokedDirectly =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  main().catch((error) => {
+    const result = {
+      timestamp: new Date().toISOString(),
+      cwd: ROOT,
+      mandatoryPass: false,
+      score: { composite: 0, tests: 0, vision: 0, robustnessDocsPerformance: 0 },
+      error: error.message
+    };
+    fs.mkdirSync(AUTO_DIR, { recursive: true });
+    fs.writeFileSync(LAST_RESULT, `${JSON.stringify(result, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exitCode = 1;
+  });
+}

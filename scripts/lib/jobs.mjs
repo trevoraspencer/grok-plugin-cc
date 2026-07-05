@@ -60,6 +60,7 @@ export function createJob({ kind = "ask", cmd = "" } = {}) {
     kind,
     status: "queued",
     pid: null,
+    childPid: null,
     startedAt: nowIso(),
     finishedAt: null,
     cmd,
@@ -69,7 +70,7 @@ export function createJob({ kind = "ask", cmd = "" } = {}) {
   return writeRecord(record);
 }
 
-export function readJob(id) {
+function readRecord(id) {
   try {
     return JSON.parse(fs.readFileSync(recordPath(id), "utf8"));
   } catch {
@@ -77,8 +78,42 @@ export function readJob(id) {
   }
 }
 
+// Best-effort liveness probe. kill(pid, 0) delivers no signal: ESRCH means the
+// process is gone; EPERM means it exists but belongs to another user (alive).
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error) && error.code === "EPERM";
+  }
+}
+
+// A record can claim "running" forever if its wrapper process died without
+// reaching a terminal mark (OOM-killed, kill -9, machine crash). Reconcile at
+// read time: a running record whose pid is gone is marked failed, so
+// /grok:status and /grok:result stop reporting a dead job as alive.
+function reconcileRecord(record) {
+  if (!record || record.status !== "running" || !Number.isFinite(record.pid)) {
+    return record;
+  }
+  if (isPidAlive(record.pid)) {
+    return record;
+  }
+  return (
+    markFailed(record.id, `process ${record.pid} is no longer running; it exited without recording a result`) ??
+    record
+  );
+}
+
+export function readJob(id) {
+  return reconcileRecord(readRecord(id));
+}
+
 function updateJob(id, patch) {
-  const job = readJob(id);
+  // Raw read on purpose: reconciliation itself goes through updateJob, so
+  // reading the reconciled view here would recurse.
+  const job = readRecord(id);
   if (!job) {
     return null;
   }
@@ -87,6 +122,13 @@ function updateJob(id, patch) {
 
 export function markRunning(id, pid) {
   return updateJob(id, { status: "running", pid: pid ?? null, startedAt: nowIso() });
+}
+
+// Record the pid of the spawned grok child. The wrapper pid alone is not
+// enough for cancellation: killing only the wrapper would orphan the live
+// grok process, which keeps burning quota until it finishes on its own.
+export function recordChildPid(id, childPid) {
+  return updateJob(id, { childPid: Number.isFinite(childPid) ? childPid : null });
 }
 
 export function markDone(id, summary = "") {
@@ -134,7 +176,8 @@ export function listJobs() {
         return null;
       }
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((record) => reconcileRecord(record));
   // ids are `${ms}-${uuid8}` with fixed-width ms, so a reverse string sort is newest-first.
   jobs.sort((a, b) => String(b.id).localeCompare(String(a.id)));
   return jobs;
@@ -148,11 +191,16 @@ export function cancelJob(id) {
   if (job.status !== "running" && job.status !== "queued") {
     return { ok: false, error: `Job ${id} is ${job.status}, not running.`, job };
   }
-  if (Number.isFinite(job.pid)) {
-    try {
-      process.kill(job.pid, "SIGTERM");
-    } catch {
-      // process already gone — fall through and mark cancelled anyway
+  // Kill the wrapper FIRST so it cannot observe the grok child's exit and
+  // overwrite the cancelled status with failed; then kill the child itself
+  // so the actual work process is not orphaned.
+  for (const pid of [job.pid, job.childPid]) {
+    if (Number.isFinite(pid)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // process already gone — fall through and mark cancelled anyway
+      }
     }
   }
   return { ok: true, job: markCancelled(id) };

@@ -8,7 +8,9 @@ import { spawnSync } from "node:child_process";
 
 import { truncate } from "./render.mjs";
 
-const MAX_DIFF_BYTES = 100 * 1024;
+// Measured in UTF-16 code units (String.length via truncate), not bytes —
+// multi-byte text can weigh more on the wire, but the cap is self-consistent.
+const MAX_DIFF_CHARS = 100 * 1024;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
 
 function git(args, cwd = process.cwd()) {
@@ -125,7 +127,14 @@ export function selectReviewTarget({ scope = "auto", base = null } = {}) {
 // Resolve the actual diff text + a human label + whether there's anything to review.
 export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() } = {}) {
   if (!isGitRepo(cwd)) {
-    return { label: "working tree", diff: "", hasChanges: false };
+    // A non-repo cwd is a hard input error, same as a bad --base: reporting
+    // "Nothing to review." here would misleadingly hide the review target.
+    return {
+      label: "working tree",
+      diff: "",
+      hasChanges: false,
+      error: "Not a git repository. Run /grok:review from inside a git repository."
+    };
   }
 
   const target = selectReviewTarget({ scope, base });
@@ -197,9 +206,9 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
 // Compose the read-only review prompt from a resolved diff. Pure + testable.
 export function buildReviewPrompt({ label, diff }) {
   const raw = String(diff ?? "");
-  const body = truncate(raw, MAX_DIFF_BYTES);
+  const body = truncate(raw, MAX_DIFF_CHARS);
   const truncatedNote =
-    raw.length > MAX_DIFF_BYTES ? "\n(Note: the diff was truncated to fit the size limit.)" : "";
+    raw.length > MAX_DIFF_CHARS ? "\n(Note: the diff was truncated to fit the size limit.)" : "";
   return [
     "You are an expert code reviewer acting as an outside model with different priors than the author.",
     `Review the following ${label}. Identify bugs, correctness issues, security problems, and risky changes.`,

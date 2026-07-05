@@ -170,6 +170,18 @@ test("review(--scope branch): no detectable base errors instead of silently usin
   }
 });
 
+test("review(non-repo): running outside a git repository errors instead of 'Nothing to review'", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-nonrepo-"));
+  try {
+    const info = resolveDiff({ scope: "auto", cwd: dir });
+    assert.ok(info.error, "expected an error outside a git repository");
+    assert.match(info.error, /not a git repository/i);
+    assert.equal(info.hasChanges, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("review(--base valid): a real base still produces a branch diff (no false error)", () => {
   const { dir, git } = tmpRepo();
   try {

@@ -20,6 +20,7 @@ import {
   markRunning,
   markDone,
   markFailed,
+  recordChildPid,
   writeOutput,
   readJob,
   readOutput,
@@ -72,7 +73,12 @@ async function runBackground({ kind, callOpts, showThought }) {
   out(`Check progress with: /grok:status ${job.id}`);
   markRunning(job.id, process.pid);
   try {
-    const result = await runGrok(callOpts);
+    // Record each spawned grok child's pid so /grok:cancel can terminate the
+    // real work process too, not just this wrapper (which would orphan it).
+    const result = await runGrok({
+      ...callOpts,
+      onSpawn: (child) => recordChildPid(job.id, child.pid)
+    });
     writeOutput(job.id, renderResult(result, { showThought }));
     if (result.ok) {
       markDone(job.id, (result.text || "").trim().split("\n")[0] || "done");

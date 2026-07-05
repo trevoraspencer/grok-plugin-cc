@@ -4,9 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { parseArgs, splitRawArgumentString } from "../scripts/lib/args.mjs";
+import { parseArgs } from "../scripts/lib/args.mjs";
 import { resolveModel, loadConfig, normalizeConfig } from "../scripts/lib/config.mjs";
-import { buildGrokArgs, parseGrokJson, classifyGrokOutput } from "../scripts/lib/grok.mjs";
+import { buildGrokArgs, parseGrokJson, classifyGrokOutput, runGrok } from "../scripts/lib/grok.mjs";
 import { renderResult, truncate } from "../scripts/lib/render.mjs";
 
 test("args: parses value options, booleans, and positionals", () => {
@@ -20,10 +20,6 @@ test("args: parses value options, booleans, and positionals", () => {
 test("args: -- passes the remainder through as positionals", () => {
   const { positionals } = parseArgs(["a", "--", "-m", "b"], { valueOptions: ["m"] });
   assert.deepEqual(positionals, ["a", "-m", "b"]);
-});
-
-test("args: splitRawArgumentString honors quotes", () => {
-  assert.deepEqual(splitRawArgumentString('ask "two words" plain'), ["ask", "two words", "plain"]);
 });
 
 test("config: resolveModel precedence is explicit > kind > fallback", () => {
@@ -167,6 +163,27 @@ test("grok: classifyGrokOutput reports a parse failure", () => {
   const r = classifyGrokOutput({ stdout: "not json at all", code: 0 });
   assert.equal(r.ok, false);
   assert.match(r.error, /parse/i);
+});
+
+test("grok: runGrok exposes each spawned child via onSpawn (pid recordable)", async () => {
+  // Point GROK_BIN at node itself: it rejects grok's flags and exits fast,
+  // which is a deterministic offline failure — no retry (not transient), and
+  // onSpawn must have fired exactly once with a real child pid.
+  const previous = process.env.GROK_BIN;
+  process.env.GROK_BIN = process.execPath;
+  try {
+    const pids = [];
+    const result = await runGrok({ prompt: "hi", retries: 0, onSpawn: (child) => pids.push(child.pid) });
+    assert.equal(pids.length, 1);
+    assert.ok(Number.isInteger(pids[0]) && pids[0] > 0);
+    assert.equal(result.ok, false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.GROK_BIN;
+    } else {
+      process.env.GROK_BIN = previous;
+    }
+  }
 });
 
 test("render: renderResult includes text and renders an error block", () => {
