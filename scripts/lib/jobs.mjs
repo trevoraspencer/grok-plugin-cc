@@ -70,7 +70,7 @@ export function createJob({ kind = "ask", cmd = "" } = {}) {
   return writeRecord(record);
 }
 
-export function readJob(id) {
+function readRecord(id) {
   try {
     return JSON.parse(fs.readFileSync(recordPath(id), "utf8"));
   } catch {
@@ -78,8 +78,42 @@ export function readJob(id) {
   }
 }
 
+// Best-effort liveness probe. kill(pid, 0) delivers no signal: ESRCH means the
+// process is gone; EPERM means it exists but belongs to another user (alive).
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return Boolean(error) && error.code === "EPERM";
+  }
+}
+
+// A record can claim "running" forever if its wrapper process died without
+// reaching a terminal mark (OOM-killed, kill -9, machine crash). Reconcile at
+// read time: a running record whose pid is gone is marked failed, so
+// /grok:status and /grok:result stop reporting a dead job as alive.
+function reconcileRecord(record) {
+  if (!record || record.status !== "running" || !Number.isFinite(record.pid)) {
+    return record;
+  }
+  if (isPidAlive(record.pid)) {
+    return record;
+  }
+  return (
+    markFailed(record.id, `process ${record.pid} is no longer running; it exited without recording a result`) ??
+    record
+  );
+}
+
+export function readJob(id) {
+  return reconcileRecord(readRecord(id));
+}
+
 function updateJob(id, patch) {
-  const job = readJob(id);
+  // Raw read on purpose: reconciliation itself goes through updateJob, so
+  // reading the reconciled view here would recurse.
+  const job = readRecord(id);
   if (!job) {
     return null;
   }
@@ -142,7 +176,8 @@ export function listJobs() {
         return null;
       }
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((record) => reconcileRecord(record));
   // ids are `${ms}-${uuid8}` with fixed-width ms, so a reverse string sort is newest-first.
   jobs.sort((a, b) => String(b.id).localeCompare(String(a.id)));
   return jobs;

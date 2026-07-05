@@ -32,10 +32,12 @@ test("jobs: full lifecycle create → running → done → read output", () => {
   assert.equal(job.status, "queued");
   assert.match(job.id, /^\d{13}-[0-9a-f]{8}$/);
 
-  markRunning(job.id, 4242);
+  // Use our own (live) pid: readJob now reconciles running records whose
+  // process is gone, so a made-up pid would legitimately read back as failed.
+  markRunning(job.id, process.pid);
   let current = readJob(job.id);
   assert.equal(current.status, "running");
-  assert.equal(current.pid, 4242);
+  assert.equal(current.pid, process.pid);
 
   writeOutput(job.id, "rendered grok output");
   markDone(job.id, "first line summary");
@@ -96,6 +98,32 @@ test("jobs: cancelJob terminates a running pid and marks cancelled", () => {
   } catch {
     // already dead from the SIGTERM above
   }
+});
+
+test("jobs: a 'running' record whose process died reads back as failed, not running forever", async () => {
+  freshJobsDir();
+  // A process that is certainly gone by the time we probe it.
+  const dead = spawn(process.execPath, ["-e", "process.exit(0)"]);
+  await new Promise((resolve) => dead.on("exit", resolve));
+
+  const job = createJob({ kind: "ask" });
+  markRunning(job.id, dead.pid);
+
+  const seen = readJob(job.id);
+  assert.equal(seen.status, "failed");
+  assert.match(seen.summary, /no longer running/);
+  // reconciliation persists the terminal state and listJobs agrees
+  assert.equal(listJobs().find((j) => j.id === job.id).status, "failed");
+  // a dead job can no longer be "cancelled"
+  assert.equal(cancelJob(job.id).ok, false);
+});
+
+test("jobs: a 'running' record with a live process stays running", () => {
+  freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  markRunning(job.id, process.pid);
+  assert.equal(readJob(job.id).status, "running");
+  assert.equal(listJobs().find((j) => j.id === job.id).status, "running");
 });
 
 test("jobs: cancelJob terminates the recorded grok child pid too, not just the wrapper", async () => {
