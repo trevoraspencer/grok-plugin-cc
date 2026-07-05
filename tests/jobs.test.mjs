@@ -11,6 +11,7 @@ import {
   markDone,
   markFailed,
   markCancelled,
+  recordChildPid,
   writeOutput,
   readOutput,
   readJob,
@@ -94,6 +95,38 @@ test("jobs: cancelJob terminates a running pid and marks cancelled", () => {
     child.kill("SIGKILL");
   } catch {
     // already dead from the SIGTERM above
+  }
+});
+
+test("jobs: cancelJob terminates the recorded grok child pid too, not just the wrapper", async () => {
+  freshJobsDir();
+  // Simulate the real topology: a dispatcher wrapper process plus the grok
+  // child it spawned. Cancelling must SIGTERM both, or the child is orphaned.
+  const wrapper = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"]);
+  const grokChild = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 60000)"]);
+  const exits = Promise.all(
+    [wrapper, grokChild].map(
+      (proc) => new Promise((resolve) => proc.on("exit", (code, signal) => resolve(signal)))
+    )
+  );
+  try {
+    const job = createJob({ kind: "ask" });
+    markRunning(job.id, wrapper.pid);
+    recordChildPid(job.id, grokChild.pid);
+    assert.equal(readJob(job.id).childPid, grokChild.pid);
+
+    const result = cancelJob(job.id);
+    assert.equal(result.ok, true);
+    assert.equal(readJob(job.id).status, "cancelled");
+    assert.deepEqual(await exits, ["SIGTERM", "SIGTERM"]);
+  } finally {
+    for (const proc of [wrapper, grokChild]) {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // already dead from the SIGTERM above
+      }
+    }
   }
 });
 

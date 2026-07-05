@@ -60,6 +60,7 @@ export function createJob({ kind = "ask", cmd = "" } = {}) {
     kind,
     status: "queued",
     pid: null,
+    childPid: null,
     startedAt: nowIso(),
     finishedAt: null,
     cmd,
@@ -87,6 +88,13 @@ function updateJob(id, patch) {
 
 export function markRunning(id, pid) {
   return updateJob(id, { status: "running", pid: pid ?? null, startedAt: nowIso() });
+}
+
+// Record the pid of the spawned grok child. The wrapper pid alone is not
+// enough for cancellation: killing only the wrapper would orphan the live
+// grok process, which keeps burning quota until it finishes on its own.
+export function recordChildPid(id, childPid) {
+  return updateJob(id, { childPid: Number.isFinite(childPid) ? childPid : null });
 }
 
 export function markDone(id, summary = "") {
@@ -148,11 +156,16 @@ export function cancelJob(id) {
   if (job.status !== "running" && job.status !== "queued") {
     return { ok: false, error: `Job ${id} is ${job.status}, not running.`, job };
   }
-  if (Number.isFinite(job.pid)) {
-    try {
-      process.kill(job.pid, "SIGTERM");
-    } catch {
-      // process already gone — fall through and mark cancelled anyway
+  // Kill the wrapper FIRST so it cannot observe the grok child's exit and
+  // overwrite the cancelled status with failed; then kill the child itself
+  // so the actual work process is not orphaned.
+  for (const pid of [job.pid, job.childPid]) {
+    if (Number.isFinite(pid)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // process already gone — fall through and mark cancelled anyway
+      }
     }
   }
   return { ok: true, job: markCancelled(id) };

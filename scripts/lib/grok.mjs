@@ -180,6 +180,17 @@ function spawnGrok(opts) {
       return;
     }
 
+    // Let the caller observe the spawned child (e.g. to record its pid so
+    // /grok:cancel can terminate the real work process, not just the
+    // dispatcher wrapper). Observer errors must never break the call.
+    if (typeof opts.onSpawn === "function") {
+      try {
+        opts.onSpawn(child);
+      } catch {
+        // ignore
+      }
+    }
+
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -211,6 +222,7 @@ function spawnGrok(opts) {
 
 // Run grok, retrying exactly once on the transient web-search failure signature.
 // `retries` is bounded (default 1) — this never loops indefinitely.
+// Pass `onSpawn(child)` to observe each spawned child process (re-invoked on retry).
 export async function runGrok(opts = {}) {
   const retries = Number.isInteger(opts.retries) ? opts.retries : 1;
   let result = await spawnGrok(opts);
