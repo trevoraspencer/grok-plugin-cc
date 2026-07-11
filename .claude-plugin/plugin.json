@@ -1,6 +1,6 @@
 {
   "name": "grok",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial Grok Build CLI in Claude Code — /grok:* commands + Grok MCP server",
   "author": {
     "name": "Trevor Spencer"

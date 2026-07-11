@@ -41,6 +41,12 @@ test("metadata: marketplace and MCP config point at local plugin entrypoints", (
   assert.deepEqual(mcp.mcpServers.grok.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs"]);
 });
 
+test("metadata: MCP server advertises the plugin release version", () => {
+  const pkg = readJson("package.json");
+  const server = readText("scripts/mcp-server.mjs");
+  assert.ok(server.includes(`version: \"${pkg.version}\"`));
+});
+
 test("metadata: release checklist covers gates, docs, versioning, and rollback", () => {
   const checklist = readText("auto/release-checklist.md");
 

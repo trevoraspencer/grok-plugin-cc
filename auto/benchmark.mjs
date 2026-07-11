@@ -23,7 +23,7 @@ const CASES = [
   },
   {
     id: "setup_json",
-    args: [path.join(ROOT, "scripts", "grok.mjs"), "setup", "--json"]
+    args: [path.join(ROOT, "scripts", "grok.mjs"), "setup", "--json --offline"]
   }
 ];
 

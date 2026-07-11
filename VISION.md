@@ -2,7 +2,7 @@
 
 > **Status:** living document · **Trajectory:** public release (v0.1.0, MIT) · **License:** [MIT](LICENSE)
 > **Disclaimer:** Unofficial. Not affiliated with or endorsed by xAI. "Grok" and "Grok Build" are xAI's.
-> **Implementation:** v1 shipped 2026-06-14 and open-sourced under [MIT](LICENSE) on GitHub (2026-06-15) — see [README.md](README.md) for install. Deviations from this design doc, by intent: commands live under `commands/` (not `skills/`); a **two-model** config is used (`default_model` = `grok-composer-2.5-fast` for review, `search_model` = `grok-build` for ask/search, since Composer searches unreliably); `hooks/` and `agents/` are not part of v1.
+> **Implementation:** v1 shipped 2026-06-14 and open-sourced under [MIT](LICENSE) on GitHub (2026-06-15) — see [README.md](README.md) for install. Updated for the July 2026 catalog: commands live under `commands/` (not `skills/`); the plugin exposes only `grok-4.5` (default/review/search) and `grok-composer-2.5-fast` (fast alternative/fallback); `hooks/` and `agents/` are not part of v1.
 
 ## Executive Summary
 
@@ -51,11 +51,11 @@ Detach a `grok -p` call using **Claude Code's own background-bash** (`run_in_bac
 
 ### Models
 
-Single configurable **default = Grok Composer 2.5 Fast**, overridable per call (`--model`/`-m`) and via plugin config.
+Configurable, allowlisted **default = Grok 4.5**, overridable per call (`--model`/`-m`) and via plugin config with Grok Composer 2.5 Fast as the only alternative.
 
-> ⚠ **Verify the exact `-m` slug at scaffold time** (`grok models` / `grok --help`). As of 2026-06-14, xAI's verified GA slugs were `grok-build-0.1` (coding model, reasoning always-on, ~256K ctx) and `grok-4.3` (1M ctx, tunable `reasoning_effort`); the full slug list changes frequently and was not crawlable. Confirm "Composer 2.5 Fast" maps to an available slug, and pin a sensible fallback.
+As verified against the live Grok Build catalog on 2026-07-10, the supported IDs are `grok-4.5` and `grok-composer-2.5-fast`. Older IDs are intentionally deprecated by this plugin and rejected at the dispatcher and MCP boundaries.
 
-An `--effort` flag is exposed for parity but is a **no-op on always-on-reasoning coding models**; it only applies to models that support `reasoning_effort` (e.g. the `grok-4.3` family). Documented as such.
+`--effort` and `--reasoning-effort` are accepted as aliases and normalized to one `--reasoning-effort` CLI argument. Grok 4.5 supports low, medium, and high effort; Composer follows its server-provided configuration.
 
 ### Safety
 
@@ -137,6 +137,6 @@ Personal in origin; **publicly released under [MIT](LICENSE)** on GitHub at [tre
 
 ## Open items to verify at scaffold time — RESOLVED (2026-06-14)
 
-- ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Verified GA slugs `grok-composer-2.5-fast` (review/general) and `grok-build` (search). `fallback_model = grok-build`. All centralized in `config/defaults.json`.
-- ~~Node floor against the installed `grok` version.~~ → Node 18+ floor (built and verified against Node 22; `grok` 0.2.51). `/grok:setup` warns below the floor.
+- ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Re-verified 2026-07-10: `grok-4.5` is the primary review/search model and `grok-composer-2.5-fast` is the fast alternative/fallback. All centralized in `config/defaults.json` and enforced by `scripts/lib/config.mjs`.
+- ~~Node floor against the installed `grok` version.~~ → Node 18+ floor (built against Node 22; current compatibility re-verified with `grok` 0.2.93). `/grok:setup` warns below either floor.
 - ~~Whether Grok's live search is on by default under `-p` or needs a flag.~~ → Live search is **on by default** under `-p`; `--disable-web-search` turns it off. Note: the search worker can transiently fail (exit 0, empty text, `stopReason: Cancelled`), so the wrapper treats an empty answer as a failure and retries once.

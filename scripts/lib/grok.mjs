@@ -25,6 +25,27 @@ export function grokVersion() {
   return (result.stdout || result.stderr || "").trim() || null;
 }
 
+export function grokModelStatus() {
+  const result = spawnSync(grokBinary(), ["models"], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 15_000,
+    maxBuffer: 1024 * 1024
+  });
+  if (result.error) {
+    return { ok: false, authenticated: false, models: [], error: result.error.message };
+  }
+  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+  const models = [...output.matchAll(/^\s*[-*]\s+([a-z0-9][a-z0-9._-]*)/gim)].map((match) => match[1]);
+  const authenticated = !/you are not authenticated|no auth credentials/i.test(output);
+  return {
+    ok: (result.status ?? 1) === 0,
+    authenticated,
+    models: [...new Set(models)],
+    error: (result.status ?? 1) === 0 ? null : (result.stderr || result.stdout || "grok models failed").trim()
+  };
+}
+
 export function buildGrokArgs({
   prompt,
   model,
@@ -44,11 +65,9 @@ export function buildGrokArgs({
   if (webSearch === false) {
     args.push("--disable-web-search");
   }
-  if (effort !== undefined && effort !== null && effort !== "") {
-    args.push("--effort", String(effort));
-  }
-  if (reasoningEffort !== undefined && reasoningEffort !== null && reasoningEffort !== "") {
-    args.push("--reasoning-effort", String(reasoningEffort));
+  const resolvedEffort = reasoningEffort ?? effort;
+  if (resolvedEffort !== undefined && resolvedEffort !== null && resolvedEffort !== "") {
+    args.push("--reasoning-effort", String(resolvedEffort));
   }
   if (maxTurns !== undefined && maxTurns !== null && maxTurns !== "") {
     args.push("--max-turns", String(maxTurns));

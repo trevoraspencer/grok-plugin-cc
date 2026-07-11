@@ -41,5 +41,5 @@ Notes:
 - Empty diff → the command prints "Nothing to review." and exits cleanly (not an error).
 - A `--base` ref that doesn't exist, or `--scope branch` with no detectable base, is reported as an error (exit 1) — it will not silently say "Nothing to review."
 - Running outside a git repository is also an error (exit 1), not "Nothing to review."
-- Review uses the configured `default_model` (`grok-composer-2.5-fast`); override with `--model <slug>`.
+- Review uses the configured `default_model` (`grok-4.5`). `--model` accepts only `grok-4.5` or `grok-composer-2.5-fast`; legacy IDs such as `grok-build` are deprecated and rejected.
 - For custom or more adversarial review framing, that is a phase-2 feature (`/grok:adversarial-review`), not yet built.
