@@ -34,13 +34,13 @@ test("ask: a bare prompt yields no options and the full prompt", () => {
   assert.equal(positionals.join(" "), "what is the capital of France");
 });
 
-test("ask: default model is search_model (grok-build); --model overrides it", () => {
+test("ask: default model is search_model (grok-4.5); --model overrides it", () => {
   const config = {
-    default_model: "grok-composer-2.5-fast",
-    search_model: "grok-build",
-    fallback_model: "grok-build"
+    default_model: "grok-4.5",
+    search_model: "grok-4.5",
+    fallback_model: "grok-composer-2.5-fast"
   };
-  assert.equal(resolveModel({ kind: "search", config }), "grok-build");
+  assert.equal(resolveModel({ kind: "search", config }), "grok-4.5");
   assert.equal(
     resolveModel({ explicit: "grok-composer-2.5-fast", kind: "search", config }),
     "grok-composer-2.5-fast"
@@ -68,12 +68,12 @@ test("review: buildReviewPrompt embeds the diff and enforces read-only framing",
 
 test("review: uses default_model by default; --model overrides", () => {
   const config = {
-    default_model: "grok-composer-2.5-fast",
-    search_model: "grok-build",
-    fallback_model: "grok-build"
+    default_model: "grok-4.5",
+    search_model: "grok-4.5",
+    fallback_model: "grok-composer-2.5-fast"
   };
-  assert.equal(resolveModel({ kind: "default", config }), "grok-composer-2.5-fast");
-  assert.equal(resolveModel({ explicit: "grok-build", kind: "default", config }), "grok-build");
+  assert.equal(resolveModel({ kind: "default", config }), "grok-4.5");
+  assert.equal(resolveModel({ explicit: "grok-composer-2.5-fast", kind: "default", config }), "grok-composer-2.5-fast");
 });
 
 // --- Codex review fix #2: ask honors the configured web_search default ---

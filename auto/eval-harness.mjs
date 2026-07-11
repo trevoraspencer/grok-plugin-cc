@@ -130,7 +130,7 @@ export function dryRunCases() {
     },
     {
       id: "setup_json_smoke",
-      args: [path.join(ROOT, "scripts", "grok.mjs"), "setup", "--json"],
+      args: [path.join(ROOT, "scripts", "grok.mjs"), "setup", "--json --offline"],
       validate(result) {
         const parsed = parseJsonStdout(result);
         if (!parsed.ok) return parsed;
@@ -280,7 +280,7 @@ function metadataChecks() {
     boolCheck("job_commands_exist", "status/result/cancel commands exist", ["commands/status.md", "commands/result.md", "commands/cancel.md"].every(exists)),
     boolCheck("setup_curl_guidance", "setup command recommends curl bootstrap, not npm", readText("commands/setup.md").includes("curl -fsSL https://x.ai/cli/install.sh")),
     boolCheck("mcp_tools_exported", "MCP server exports grok_search and grok_ask", includesAll(mcpServer, ["grok_search", "grok_ask"])),
-    boolCheck("defaults_models", "defaults include composer/search/fallback models", includesAll(JSON.stringify(defaults), ["grok-composer-2.5-fast", "grok-build", "fallback_model"])),
+    boolCheck("defaults_models", "defaults expose only Grok 4.5 and Composer 2.5 Fast", includesAll(JSON.stringify(defaults), ["grok-4.5", "grok-composer-2.5-fast", "fallback_model"]) && !JSON.stringify(defaults).includes('"grok-build"')),
     boolCheck("no_auto_update", "grok calls always include --no-auto-update", grokLib.includes("--no-auto-update")),
     boolCheck("transient_retry", "grok wrapper retries transient empty answers", includesAll(grokLib, ["transient", "attempts", "retries"])),
     boolCheck("readme_unofficial", "README carries unofficial disclaimer", /Unofficial/i.test(readme)),

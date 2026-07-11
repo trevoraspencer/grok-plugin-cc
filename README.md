@@ -86,26 +86,31 @@ Version-controlled defaults live in [`config/defaults.json`](config/defaults.jso
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `default_model` | `grok-composer-2.5-fast` | model for `review` and general use |
-| `search_model` | `grok-build` | model for `ask` / `grok_search` (searches reliably) |
-| `fallback_model` | `grok-build` | used if a chosen slug is empty |
+| `default_model` | `grok-4.5` | primary model for `review` and general use |
+| `search_model` | `grok-4.5` | model for `ask` / `grok_search`; Grok 4.5 supports web and X search |
+| `fallback_model` | `grok-composer-2.5-fast` | fast alternative used when the selected config key is empty |
 | `safety` | `permissive` | trust + git as the safety net (MVP commands are read-only). The write-capable `rescue` is phase-2; this key lets a future release flip to preview/approval without a rewrite. |
 | `web_search` | `true` | live-search default for `/grok:ask` and the `grok_ask` MCP tool (the `grok_search` tool always searches, regardless of this) |
 | `max_turns` | `null` | cap on grok agent turns for `ask` and the MCP tools; `null` = no cap |
 
-Per-call flags always win over config: `--model`/`-m` overrides the model slug, and `--no-search`/`--search` override the `web_search` default. Two models are used because Grok Composer searches unreliably, so search routes to `grok-build`.
+Per-call flags always win over config: `--model`/`-m` overrides the model ID, and `--no-search`/`--search` override the `web_search` default. The plugin intentionally exposes only the two models in the current Grok Build catalog:
+
+- `grok-4.5` — default for review, questions, and live web/X search.
+- `grok-composer-2.5-fast` — faster optional alternative and configured fallback.
+
+Legacy or custom IDs (including `grok-build`) are rejected with a migration error instead of being forwarded to the CLI. Machine-local overrides in `.grok/grok-plugin.json` must also use one of the two supported IDs.
 
 > `--no-auto-update` is **always** passed to grok in automation (it is not a config knob), so a headless call never triggers an interactive self-update.
 
 ### The `--effort` / `--reasoning-effort` note
 
-`--effort` is exposed for parity but is a **no-op on always-on-reasoning coding models** (e.g. `grok-build`, the composer models). It only affects models that support `reasoning_effort` (e.g. the `grok-4.x` family).
+`--effort` and `--reasoning-effort` are accepted as aliases. The wrapper emits one canonical `--reasoning-effort` argument; if both are supplied, the long form wins. Grok 4.5 supports `low`, `medium`, and `high` reasoning effort. Composer behavior follows its server-provided model configuration.
 
 ## Design notes
 
 - **Headless + MCP, not ACP.** ACP casts Grok as the agent expecting an editor client; that's the wrong fit for "Claude Code calls Grok." This plugin uses headless one-shot calls plus an MCP server.
 - **No kept artifacts.** Output renders inline. Background jobs use a transient registry under the OS temp dir — never committed.
-- **Drift-resistant.** All `grok` invocation goes through one choke-point (`scripts/lib/grok.mjs`) with config-driven slugs, a hard-coded fallback, and defensive JSON parsing. grok can exit 0 with an empty answer when its web-search worker transiently fails; the wrapper treats that as a failure and retries once.
+- **Drift-resistant.** All `grok` invocation goes through one choke-point (`scripts/lib/grok.mjs`) with a two-model allowlist, a hard-coded fallback, and defensive JSON parsing. grok can exit 0 with an empty answer when its web-search worker transiently fails; the wrapper treats that as a failure and retries once.
 - **Auth/key safety.** `XAI_API_KEY` is only ever presence-checked, never printed or logged.
 
 ## Development
@@ -122,6 +127,10 @@ npm test        # node --test (unit suite, no live CLI calls)
 `ask` and `review` accept `--print-args`: it prints the exact `grok` argv that *would* be sent and exits without calling grok — a dry-run for debugging model and flag resolution.
 
 The eval and benchmark helpers are offline by design. They exercise Node syntax, unit tests, command dry-runs, MCP handshake behavior, metadata, and dispatcher latency without making live Grok or web-search calls.
+
+Current compatibility baseline: tested with Grok Build stable `0.2.93` after reviewing the July 5–9, 2026 changes through changelog `0.2.94` (which was posted but not yet offered by the stable updater during validation). The headless integration continues to use `-p --output-format json --no-auto-update`; `/grok:setup` verifies the installed version, live auth state, and the two-model catalog.
+
+See [`docs/grok-build-compatibility.md`](docs/grok-build-compatibility.md) for the version-by-version compatibility audit and resulting decisions.
 
 ## Roadmap (phase 2, deferred)
 

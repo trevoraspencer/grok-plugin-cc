@@ -34,5 +34,5 @@ Bash({
 
 Notes:
 - Grok answers with live web/X search **on by default** (the main reason to reach for Grok mid-task), following the `web_search` config setting. Pass `--no-search` to disable it for one call, or `--search` to force it on.
-- The default model is the configured `search_model` (`grok-build`), which searches reliably. Override per call with `--model <slug>`.
+- The default model is the configured `search_model` (`grok-4.5`). `--model` accepts only `grok-4.5` or `grok-composer-2.5-fast`; legacy IDs such as `grok-build` are deprecated and rejected.
 - This command is read-only — it only asks Grok a question and prints the answer.

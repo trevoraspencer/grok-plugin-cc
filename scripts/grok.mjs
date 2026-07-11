@@ -30,7 +30,7 @@ import {
 
 export const OPTION_SPEC = {
   valueOptions: ["model", "base", "scope", "max-turns", "effort", "reasoning-effort"],
-  booleanOptions: ["no-search", "search", "background", "thought", "print-args", "json"],
+  booleanOptions: ["no-search", "search", "background", "thought", "print-args", "json", "offline"],
   aliasMap: { m: "model" }
 };
 
@@ -229,7 +229,7 @@ function cmdCancel(parsed) {
 }
 
 function cmdSetup(parsed, config) {
-  const report = buildSetupReport(gatherSetupInputs(config));
+  const report = buildSetupReport(gatherSetupInputs(config, { offline: Boolean(parsed.options.offline) }));
   out(parsed.options.json ? JSON.stringify(report, null, 2) : renderSetupReport(report));
   if (!report.cliOk) {
     process.exitCode = 1;
