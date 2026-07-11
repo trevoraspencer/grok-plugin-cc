@@ -231,7 +231,9 @@ function cmdCancel(parsed) {
 function cmdSetup(parsed, config) {
   const report = buildSetupReport(gatherSetupInputs(config, { offline: Boolean(parsed.options.offline) }));
   out(parsed.options.json ? JSON.stringify(report, null, 2) : renderSetupReport(report));
-  if (!report.cliOk) {
+  // --offline is reserved for the hermetic eval/benchmark schema smoke. It
+  // reports missing external tooling but must not fail a clean CI runner.
+  if (!parsed.options.offline && !report.cliOk) {
     process.exitCode = 1;
   }
 }

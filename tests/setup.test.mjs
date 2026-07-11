@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { buildSetupReport } from "../scripts/lib/setup.mjs";
 import { renderSetupReport } from "../scripts/lib/render.mjs";
@@ -11,6 +13,8 @@ const CONFIG = {
   safety: "permissive",
   web_search: true
 };
+
+const DISPATCHER = fileURLToPath(new URL("../scripts/grok.mjs", import.meta.url));
 
 test("setup: OK when grok present + auth present + node ok", () => {
   const report = buildSetupReport({
@@ -126,4 +130,15 @@ test("setup: renderSetupReport produces readable markdown without throwing on a 
   assert.ok(md.includes("# Grok setup"));
   assert.ok(md.includes("Status: issues found"));
   assert.ok(md.includes("Next steps:"));
+});
+
+test("setup: offline schema smoke exits zero without an installed Grok CLI", () => {
+  const result = spawnSync(process.execPath, [DISPATCHER, "setup", "--json --offline"], {
+    encoding: "utf8",
+    env: { ...process.env, GROK_BIN: "definitely-not-an-installed-grok-binary" }
+  });
+  assert.equal(result.status, 0);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.cliOk, false);
+  assert.ok(Array.isArray(report.checks));
 });
