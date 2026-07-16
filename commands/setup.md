@@ -12,6 +12,8 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/grok.mjs" setup $ARGUMENTS
 
 Present the report to the user.
 
+`--json` emits the same report as structured JSON. The dispatcher exits nonzero when the Grok CLI is missing; missing auth and an old Node version are reported as warnings and next steps without changing the exit code.
+
 If it reports that grok is **not installed**, the fix is the curl bootstrap (do NOT suggest `npm install` — grok is installed via curl):
 
 ```bash

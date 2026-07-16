@@ -1,4 +1,4 @@
-# Supergoal planning artifacts (this run's scratch — not part of the plugin)
+# Local planning artifacts (not part of the plugin)
 .supergoal/
 
 # Autoresearch generated scratch/output (manual + jsonl log stay tracked)

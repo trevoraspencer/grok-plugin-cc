@@ -54,14 +54,16 @@ Run `/grok:setup` to confirm everything is wired up.
 
 | Command | What it does | Key flags |
 | --- | --- | --- |
-| `/grok:ask <question>` | Ask Grok one-shot; live search on by default | `--model <slug>`, `--no-search`, `--search`, `--background` |
-| `/grok:review` | Read-only review of the diff | `--base <ref>`, `--scope auto\|working-tree\|branch`, `--background` |
+| `/grok:ask <question>` | Ask Grok one-shot; live search follows config and defaults on | `--model <slug>`, `--no-search`, `--search`, `--max-turns <n>`, `--effort <level>`, `--reasoning-effort <level>`, `--thought`, `--background`, `--print-args` |
+| `/grok:review` | Read-only review of the diff; live search defaults off | `--model <slug>`, `--base <ref>`, `--scope auto\|working-tree\|branch`, `--search`, `--thought`, `--background`, `--print-args` |
 | `/grok:status [job-id]` | List background jobs, or one job's detail | — |
 | `/grok:result <job-id>` | Print a finished job's captured output | — |
 | `/grok:cancel <job-id>` | Cancel a running background job | — |
 | `/grok:setup` | Diagnose CLI, auth, and resolved config | `--json` |
 
 `/grok:review` is strictly read-only — it never edits files or applies patches.
+
+For `ask`, `--max-turns` overrides the configured `max_turns` for that call. `--effort` and `--reasoning-effort` are forwarded to the Grok CLI; whether they affect a response depends on the selected model. For both `ask` and `review`, `--thought` appends Grok's returned reasoning in a collapsed details block, and `--print-args` prints the exact CLI argv without invoking Grok. `--print-args` takes precedence over `--background`.
 
 **Review scope** (`--scope`, default `auto`):
 
@@ -71,25 +73,31 @@ Run `/grok:setup` to confirm everything is wired up.
 
 An empty diff prints `Nothing to review.` and exits 0. A `--base` ref that doesn't exist — or `--scope branch` when no base can be detected — is reported as an error (exit 1) rather than a misleading "nothing to review". Running the command outside a git repository is likewise an error (exit 1).
 
+Working-tree review includes staged, unstaged, and untracked files. Untracked files larger than 24 KiB and binary files are represented by a skip marker, and the assembled review input is capped at 100 Ki UTF-16 code units. Review does not use live search unless `--search` is passed.
+
+### Background jobs
+
+`ask` and `review` can run through Claude Code's background Bash support. The dispatcher writes a transient JSON record and captured output under the OS temporary directory, records both the dispatcher and Grok child PIDs, and exposes them through `status`, `result`, and `cancel`. Dead dispatcher processes are reconciled to `failed` when read, and cancellation terminates both recorded processes. This is local process plumbing, not a durable database or a kept project artifact.
+
 ## MCP tools
 
 The plugin ships a zero-dependency stdio MCP server (`.mcp.json` → `scripts/mcp-server.mjs`) exposing:
 
-- **`grok_search`** — `{ query, model? }` → **always** performs a live web/X search and returns a synthesized answer with inline `[[n]](url)` citations.
+- **`grok_search`** — `{ query, model? }` → **always** performs a live web/X search and returns Grok's synthesized answer, including citation links when Grok supplies them.
 - **`grok_ask`** — `{ prompt, model?, search? }` → a one-shot question. Live search follows the `web_search` config default; pass `search:true`/`false` to override per call.
 
 Claude can call these autonomously when it needs current information.
 
 ## Configuration
 
-Version-controlled defaults live in [`config/defaults.json`](config/defaults.json). A machine-local override may be placed at `./.grok/grok-plugin.json` (shallow-merged, git-ignored).
+Version-controlled defaults live in [`config/defaults.json`](config/defaults.json). A machine-local override may be placed at `./.grok/grok-plugin.json` (git-ignored). Overrides are validated per key: model values must be non-empty strings, `safety` must be `permissive` or `preview`, `web_search` must be boolean, and `max_turns` must be `null` or a positive integer. Invalid and unknown values are ignored in favor of the shipped defaults.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `default_model` | `grok-composer-2.5-fast` | model for `review` and general use |
+| `default_model` | `grok-composer-2.5-fast` | model for `/grok:review` |
 | `search_model` | `grok-build` | model for `ask` / `grok_search` (searches reliably) |
 | `fallback_model` | `grok-build` | used if a chosen slug is empty |
-| `safety` | `permissive` | trust + git as the safety net (MVP commands are read-only). The write-capable `rescue` is phase-2; this key lets a future release flip to preview/approval without a rewrite. |
+| `safety` | `permissive` | reserved for future write-capable commands; current commands remain read-only regardless of this value |
 | `web_search` | `true` | live-search default for `/grok:ask` and the `grok_ask` MCP tool (the `grok_search` tool always searches, regardless of this) |
 | `max_turns` | `null` | cap on grok agent turns for `ask` and the MCP tools; `null` = no cap |
 
@@ -113,7 +121,7 @@ Per-call flags always win over config: `--model`/`-m` overrides the model slug, 
 No runtime dependencies. Dev scripts (Node's built-in tooling only):
 
 ```bash
-npm run check   # node --check on every .mjs
+npm run check   # node --check on production and test .mjs files
 npm run eval    # full local eval harness with composite score
 npm run bench   # deterministic dispatcher-only benchmark
 npm test        # node --test (unit suite, no live CLI calls)
