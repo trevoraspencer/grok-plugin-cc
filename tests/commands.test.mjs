@@ -74,11 +74,39 @@ test("commands: ask documents live search defaults and overrides", () => {
   assert.ok(text.includes("search_model"));
 });
 
+test("commands: ask documents every implemented execution and rendering flag", () => {
+  const text = commandText("ask");
+  const flags = [
+    "--model",
+    "--no-search",
+    "--search",
+    "--max-turns",
+    "--effort",
+    "--reasoning-effort",
+    "--thought",
+    "--background",
+    "--print-args"
+  ];
+  for (const flag of flags) {
+    assert.ok(text.includes(flag), `ask should document ${flag}`);
+  }
+});
+
+test("commands: review documents every implemented review and rendering flag", () => {
+  const text = commandText("review");
+  const flags = ["--model", "--base", "--scope", "--search", "--thought", "--background", "--print-args"];
+  for (const flag of flags) {
+    assert.ok(text.includes(flag), `review should document ${flag}`);
+  }
+  assert.match(text, /Live search is off for review unless `--search` is passed/);
+});
+
 test("commands: setup keeps auth guidance secret-safe and curl-based", () => {
   const text = commandText("setup");
   assert.ok(text.includes("curl -fsSL https://x.ai/cli/install.sh | bash"));
   assert.match(text, /do NOT suggest `npm install`/i);
   assert.ok(text.includes("Never print the key value"));
+  assert.ok(text.includes("missing auth and an old Node version are reported as warnings"));
 });
 
 test("commands: status/result/cancel preserve verbatim job plumbing output", () => {

@@ -46,7 +46,7 @@ export const TOOLS = [
   {
     name: "grok_ask",
     description:
-      "Ask Grok a one-shot question. Live web search is on by default; pass search=false to disable it for a pure model answer.",
+      "Ask Grok a one-shot question. Live web search follows the plugin's web_search setting unless the call overrides it with search=true or search=false.",
     inputSchema: {
       type: "object",
       properties: {
@@ -54,9 +54,12 @@ export const TOOLS = [
         model: {
           type: "string",
           enum: SUPPORTED_MODELS,
-          description: "Optional supported Grok model ID to override the default."
+          description: "Optional supported Grok model ID to override the configured search model."
         },
-        search: { type: "boolean", description: "Whether to allow live web search (default true)." }
+        search: {
+          type: "boolean",
+          description: "Optional live-search override for this call. Omit it to use the configured web_search default."
+        }
       },
       required: ["prompt"],
       additionalProperties: false

@@ -2,7 +2,7 @@
 
 > **Status:** living document · **Trajectory:** public release (v0.1.0, MIT) · **License:** [MIT](LICENSE)
 > **Disclaimer:** Unofficial. Not affiliated with or endorsed by xAI. "Grok" and "Grok Build" are xAI's.
-> **Implementation:** v1 shipped 2026-06-14 and open-sourced under [MIT](LICENSE) on GitHub (2026-06-15) — see [README.md](README.md) for install. Updated for the July 2026 catalog: commands live under `commands/` (not `skills/`); the plugin exposes only `grok-4.5` (default/review/search) and `grok-composer-2.5-fast` (fast alternative/fallback); `hooks/` and `agents/` are not part of v1.
+> **Implementation:** v1 shipped 2026-06-14 and was open-sourced under [MIT](LICENSE) on GitHub on 2026-06-15. The current implementation uses `commands/` for slash-command prompts, a two-model allowlisted routing config updated for the July 2026 catalog (`grok-4.5` for review/ask/search, `grok-composer-2.5-fast` as the fast alternative/fallback), a transient OS-temp job registry, and no `hooks/` or `agents/` directories. See [README.md](README.md) for the operational reference and install instructions.
 
 ## Executive Summary
 
@@ -23,7 +23,7 @@ Four motivations, in MVP priority order:
 
 - Grok-native `/grok:*` commands that feel familiar to `codex-plugin-cc` users without pretending Grok is Codex.
 - Make Grok's live search a first-class capability — both as a command and as an MCP tool Claude can call on its own.
-- Full local control: editable prompts (skill bodies) and plugin config are version-controlled and take effect immediately; no telemetry; no external services beyond the `grok` CLI.
+- Full local control: editable command prompts and plugin config are version-controlled and take effect immediately; no telemetry; no external services beyond the `grok` CLI.
 - Easy to fork, read, and hand-edit (plain `.mjs`, no build step).
 - Conform to the current Claude Code plugin spec so local install is a 2-step, sub-5-minute affair.
 
@@ -40,22 +40,25 @@ Four motivations, in MVP priority order:
 
 ### Transport — headless + MCP hybrid (not ACP)
 
-Grok Build exposes exactly two machine-friendly modes: `grok -p "..."` (headless one-shot, `--output-format plain|json|streaming-json`) and `grok agent stdio` (ACP over newline-delimited JSON-RPC 2.0). ACP is rejected for the reason above. Therefore:
+The implementation deliberately targets Grok Build's `grok -p "..."` headless mode and does not use `grok agent stdio`/ACP. Therefore:
 
 - **Slash commands** → a thin `.mjs` wrapper → `grok -p --output-format json` (always with `--no-auto-update` in automation). Stateless, one call per invocation; no broker or daemon.
 - **MCP server** (`.mcp.json` at plugin root) exposing **`grok_search`** and **`grok_ask`** so Claude can consult Grok — especially live search — autonomously during its own work.
 
 ### Background jobs — lightweight
 
-Detach a `grok -p` call using **Claude Code's own background-bash** (`run_in_background`). `/grok:status`, `/grok:result`, `/grok:cancel` are thin wrappers over the job's PID and a transient output file (the file is job plumbing, not a kept artifact — consistent with inline-only delivery). No persisted registry; if that proves insufficient it can be revisited in phase 2.
+Detach a `grok -p` call using **Claude Code's own background-bash** (`run_in_background`). The dispatcher creates a transient JSON record and output file under the OS temporary directory, records the wrapper and Grok child PIDs, and exposes that state through `/grok:status`, `/grok:result`, and `/grok:cancel`. Dead wrappers are reconciled to `failed` on read; cancellation signals both recorded processes. This is intentionally lightweight local process state, not a durable database or an in-repo result artifact.
 
 ### Models
 
-Configurable, allowlisted **default = Grok 4.5**, overridable per call (`--model`/`-m`) and via plugin config with Grok Composer 2.5 Fast as the only alternative.
+Two configurable routes are implemented, both allowlisted:
 
-As verified against the live Grok Build catalog on 2026-07-10, the supported IDs are `grok-4.5` and `grok-composer-2.5-fast`. Older IDs are intentionally deprecated by this plugin and rejected at the dispatcher and MCP boundaries.
+- `default_model = grok-4.5` for `/grok:review`.
+- `search_model = grok-4.5` for `/grok:ask`, `grok_search`, and `grok_ask` (Grok 4.5 supports live web and X search).
 
-`--effort` and `--reasoning-effort` are accepted as aliases and normalized to one `--reasoning-effort` CLI argument. Grok 4.5 supports low, medium, and high effort; Composer follows its server-provided configuration.
+`fallback_model = grok-composer-2.5-fast` is used when the selected route has no usable ID. `--model`/`-m` overrides routing per call. As verified against the live Grok Build catalog on 2026-07-10, the supported IDs are `grok-4.5` and `grok-composer-2.5-fast`; older IDs (including `grok-build`) are intentionally deprecated by this plugin and rejected with a migration error at the dispatcher and MCP boundaries.
+
+The ask command also forwards `--max-turns`. `--effort` and `--reasoning-effort` are accepted as aliases and normalized to one `--reasoning-effort` CLI argument (the long form wins if both are supplied). Grok 4.5 supports low, medium, and high effort; Composer follows its server-provided configuration.
 
 ### Safety
 
@@ -79,33 +82,30 @@ As verified against the live Grok Build catalog on 2026-07-10, the supported IDs
 
 ## Tech & Structure
 
-- **Language:** plain **`.mjs`** ES modules (matches the canonical plugin; no build step; trivial to fork/hand-edit). **Node 18+** — confirm against the installed `grok` (some peers require Node 20+).
+- **Language:** plain **`.mjs`** ES modules (no build step; trivial to fork/hand-edit). **Node 18+**, declared in package metadata (`engines`) and checked/reported by `/grok:setup` (which warns below the floor).
 - **Grok CLI:** install via xAI's curl bootstrap (`curl -fsSL https://x.ai/cli/install.sh | bash`), **not npm**. Auth via `XAI_API_KEY` or SuperGrok / X Premium Plus sign-in. Grok's own config lives at `~/.grok/config.toml` (project override `./.grok/config.toml`).
-- **Plugin config:** version-controlled in-repo (default model, `safety` mode, search defaults). **Prompts/templates live in each skill's `SKILL.md`** — editable, committed, effective immediately (this is the "version-controlled prompts/config" the draft wanted).
-- **Repo layout** (corrected to the real Claude Code plugin spec):
+- **Plugin config:** version-controlled defaults in `config/defaults.json`, with a validated, git-ignored `.grok/grok-plugin.json` machine override. Command prompts live in `commands/*.md`; both are editable, committed where appropriate, and effective without a build.
+- **Repo layout:**
 
 ```
 grok-plugin-cc/
 ├── .claude-plugin/
 │   ├── plugin.json          # manifest — only `name` is strictly required
 │   └── marketplace.json     # enables /plugin marketplace add ./ + /plugin install
-├── skills/                  # /grok:* as skills (SKILL.md) — preferred over commands/
-│   ├── review/SKILL.md
-│   ├── ask/SKILL.md
-│   ├── setup/SKILL.md
-│   ├── status/SKILL.md
-│   ├── result/SKILL.md
-│   └── cancel/SKILL.md
-├── agents/                  # grok-rescue subagent (PHASE 2)
-├── scripts/lib/             # .mjs: grok wrapper, headless runner, job tracking, render
+├── commands/                # ask, review, setup, status, result, cancel prompts
+├── scripts/
+│   ├── grok.mjs             # slash-command dispatcher
+│   ├── mcp-server.mjs       # zero-dependency stdio MCP server
+│   └── lib/                 # config, git, Grok, jobs, render, and setup helpers
 ├── .mcp.json                # Grok-backed MCP server (grok_search / grok_ask)
-├── hooks/hooks.json         # optional (e.g. SessionStart setup check)
-├── config/                  # version-controlled plugin defaults (model, safety, search)
+├── config/defaults.json     # version-controlled validated defaults
+├── tests/                   # offline Node test suite
+├── auto/                    # offline eval, benchmark, and release guidance
 ├── VISION.md                # this file
 └── README.md                # install (grok curl + marketplace add) + unofficial disclaimer
 ```
 
-- **Spec trap:** plugin-shipped **subagents cannot declare their own `mcpServers`/`hooks`/`permissionMode`** (silently ignored for security). The Grok MCP server therefore lives at the plugin root via `.mcp.json`, never inside a subagent.
+- **Spec constraint:** the Grok MCP server is registered once at the plugin root through `.mcp.json`; v1 does not ship a subagent, hook, or duplicate per-command server configuration.
 
 ## Distribution & Install
 
@@ -119,11 +119,11 @@ Personal in origin; **publicly released under [MIT](LICENSE)** on GitHub at [tre
 - `/grok:review` and `/grok:ask` work end-to-end against the real `grok` CLI, rendering output inline.
 - `grok_search` MCP tool is callable by Claude autonomously mid-task.
 - Background review (`--background`) plus `status`/`result`/`cancel` works on Claude Code's background-bash.
-- `/grok:setup` correctly diagnoses a missing CLI or missing API key.
-- Default model + per-call override and the `safety` mode are editable in-repo and take effect immediately.
+- `/grok:setup` correctly diagnoses a missing CLI and reports detected auth, Node, model, safety, search, and automation state without exposing credentials.
+- Model, search, and turn-limit defaults are editable in-repo and take effect immediately; `safety` is validated and reported but remains reserved until a write-capable command is implemented.
 - Fully local; install in under 5 minutes.
 
-## References (verified)
+## Design references
 
 - **`openai/codex-plugin-cc`** — architectural inspiration (app-server + commands/jobs/subagent UX). https://github.com/openai/codex-plugin-cc
 - **`zachdunn/grok-plugin-claude-code`** — closest precedent: lean headless `grok -p --output-format json`, no job registry. https://github.com/zachdunn/grok-plugin-claude-code
@@ -137,6 +137,6 @@ Personal in origin; **publicly released under [MIT](LICENSE)** on GitHub at [tre
 
 ## Open items to verify at scaffold time — RESOLVED (2026-06-14)
 
-- ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Re-verified 2026-07-10: `grok-4.5` is the primary review/search model and `grok-composer-2.5-fast` is the fast alternative/fallback. All centralized in `config/defaults.json` and enforced by `scripts/lib/config.mjs`.
+- ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Verified slugs at implementation time (2026-06-14) were `grok-composer-2.5-fast` (review) and `grok-build` (ask/search); re-verified 2026-07-10: `grok-4.5` is now the primary review/search model and `grok-composer-2.5-fast` the fast alternative/fallback. All centralized in `config/defaults.json` and enforced by `scripts/lib/config.mjs`.
 - ~~Node floor against the installed `grok` version.~~ → Node 18+ floor (built against Node 22; current compatibility re-verified with `grok` 0.2.93). `/grok:setup` warns below either floor.
 - ~~Whether Grok's live search is on by default under `-p` or needs a flag.~~ → Live search is **on by default** under `-p`; `--disable-web-search` turns it off. Note: the search worker can transiently fail (exit 0, empty text, `stopReason: Cancelled`), so the wrapper treats an empty answer as a failure and retries once.

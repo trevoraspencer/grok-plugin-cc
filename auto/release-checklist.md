@@ -38,10 +38,14 @@ Use this checklist before tagging or publishing `grok-plugin-cc`. It is scoped t
 ## Documentation Gates
 
 - README command table matches the command files in `commands/`.
+- README and command argument hints cover the implemented model, search, background, reasoning-display, dry-run, effort, turn-limit, base, and scope flags where applicable.
 - README configuration table matches `config/defaults.json`.
+- README explains per-key validation for `.grok/grok-plugin.json` and does not imply that invalid or unknown values are accepted.
+- README describes the transient OS-temp background-job registry and review input limits without calling either durable project state.
+- MCP tool descriptions say that `grok_ask` follows the configured `web_search` default when no per-call override is supplied.
 - README explains that Grok is installed with the xAI curl bootstrap, not npm.
 - README explains that this plugin is unofficial and not affiliated with xAI.
-- VISION.md remains a living design reference and any implemented phase-2 item is moved out of "deferred" language.
+- VISION.md reflects the implemented `commands/` layout, two-model routing, transient job registry, and absence of v1 hooks/agents; any implemented phase-2 item is moved out of "deferred" language.
 
 ## Versioning Notes
 

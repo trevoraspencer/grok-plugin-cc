@@ -94,7 +94,10 @@ async function runBackground({ kind, callOpts, showThought }) {
 async function cmdAsk(parsed, config) {
   const prompt = parsed.positionals.join(" ").trim();
   if (!prompt) {
-    err("Usage: /grok:ask [--model <slug>] [--no-search] <question>");
+    err(
+      "Usage: /grok:ask [--model <slug>] [--no-search|--search] [--max-turns <n>] " +
+        "[--effort <level>] [--reasoning-effort <level>] [--thought] [--background] [--print-args] <question>"
+    );
     process.exitCode = 1;
     return;
   }

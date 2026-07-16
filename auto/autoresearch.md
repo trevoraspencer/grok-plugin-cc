@@ -1,6 +1,8 @@
 # Autoresearch Operating Manual
 
-This file is the local operating manual for the production-readiness ratchet in this repository. It is intentionally explicit so a future agent can resume the run without relying on hidden chat context.
+> **Status:** archived runbook. The original and GPT-only five-cycle runs completed on 2026-06-22; their immutable event history remains in `auto/autoresearch.jsonl`. Use this file to reproduce or extend that workflow, not as the current product reference. Current behavior is documented in `README.md` and `VISION.md`.
+
+This file is the local operating manual for the production-readiness ratchet in this repository. It is intentionally explicit so a future agent can reproduce the run without relying on hidden chat context.
 
 ## Primary Goal
 
@@ -12,8 +14,9 @@ Make `grok-plugin-cc` more production-ready for a public, local-first Claude Cod
 - No build step.
 - No live Grok calls in normal tests or eval gates.
 - Safety-first behavior for anything write-capable.
+- No durable or in-repo answer artifacts; transient background-job records and output under the OS temp directory are allowed.
 
-The current run is constrained to five autoresearch cycles before human review.
+Each recorded run was constrained to five autoresearch cycles before human review.
 
 ## Composite Metric
 
@@ -58,7 +61,7 @@ The repo's `VISION.md` defines v1 as a Grok-native, headless-plus-MCP Claude Cod
 - version-controlled config
 - no ACP
 - no daemon
-- no persisted answer artifacts
+- no durable or in-repo answer artifacts (background jobs use transient OS-temp files)
 
 Phase-2 features such as `/grok:rescue`, `/grok:research`, adversarial review, image support, and a real job registry are eligible only when they are small, safe, tested, and improve the composite score. Write-capable work must preserve the documented `safety` direction.
 
@@ -83,7 +86,7 @@ Do not use destructive global resets when narrower file-level reversal is possib
 
 ### Active Rerun: Codex-Only
 
-For the `autoresearch-gpt55-xhigh-20260622-193805` rerun, do not invoke Grok Build, the Grok CLI, or Grok-backed MCP tools for research, reasoning, or code generation. The user explicitly requested dropping Grok Build and using the Codex session's GPT-only high-reasoning pass instead.
+The `autoresearch-gpt55-xhigh-20260622-193805` rerun completed on 2026-06-22. Its mandate is preserved here for reproducibility: do not invoke Grok Build, the Grok CLI, or Grok-backed MCP tools for research, reasoning, or code generation when extending that run. The user explicitly requested dropping Grok Build and using the Codex session's GPT-only high-reasoning pass instead.
 
 For this rerun:
 

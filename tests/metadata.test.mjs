@@ -72,6 +72,32 @@ test("metadata: README documents offline eval and benchmark development flow", (
   assert.match(readme, /without making live Grok or web-search calls/i);
 });
 
+test("metadata: README documents current config, review, and background-job behavior", () => {
+  const readme = readText("README.md");
+
+  assert.match(readme, /Overrides are validated per key/);
+  assert.match(readme, /transient JSON record and captured output under the OS temporary directory/);
+  assert.match(readme, /Untracked files larger than 24 KiB/);
+  assert.match(readme, /Review does not use live search unless `--search` is passed/);
+});
+
+test("metadata: VISION uses the implemented commands layout and two-model routing", () => {
+  const vision = readText("VISION.md");
+
+  assert.ok(vision.includes("├── commands/"));
+  assert.ok(vision.includes("Two configurable routes are implemented"));
+  assert.ok(vision.includes("transient JSON record and output file under the OS temporary directory"));
+  assert.ok(!vision.includes("├── skills/"));
+  assert.ok(!vision.includes("Prompts/templates live in each skill's `SKILL.md`"));
+});
+
+test("metadata: MCP ask description follows config unless explicitly overridden", () => {
+  const mcp = readText("scripts/mcp-server.mjs");
+
+  assert.ok(mcp.includes("follows the plugin's web_search setting"));
+  assert.ok(mcp.includes("Omit it to use the configured web_search default"));
+});
+
 test("metadata: benchmark helper stays deterministic and dispatcher-only", () => {
   const benchmark = readText("auto/benchmark.mjs");
 
