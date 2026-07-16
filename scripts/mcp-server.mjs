@@ -17,10 +17,10 @@ import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 import { runGrok } from "./lib/grok.mjs";
-import { loadConfig, resolveModel } from "./lib/config.mjs";
+import { loadConfig, resolveModel, SUPPORTED_MODELS } from "./lib/config.mjs";
 import { renderResult } from "./lib/render.mjs";
 
-const SERVER_INFO = { name: "grok", version: "0.1.0" };
+const SERVER_INFO = { name: "grok", version: "0.2.0" };
 const DEFAULT_PROTOCOL = "2025-06-18";
 const SUPPORTED_PROTOCOLS = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]);
 
@@ -33,7 +33,11 @@ export const TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "The question or topic to research with live web search." },
-        model: { type: "string", description: "Optional grok model slug to override the default search model." }
+        model: {
+          type: "string",
+          enum: SUPPORTED_MODELS,
+          description: "Optional supported Grok model ID to override the default search model."
+        }
       },
       required: ["query"],
       additionalProperties: false
@@ -47,7 +51,11 @@ export const TOOLS = [
       type: "object",
       properties: {
         prompt: { type: "string", description: "The question or instruction for Grok." },
-        model: { type: "string", description: "Optional grok model slug to override the configured search model." },
+        model: {
+          type: "string",
+          enum: SUPPORTED_MODELS,
+          description: "Optional supported Grok model ID to override the configured search model."
+        },
         search: {
           type: "boolean",
           description: "Optional live-search override for this call. Omit it to use the configured web_search default."
@@ -94,9 +102,15 @@ async function handleToolCall(id, params, { run, config }) {
     if (!query) {
       return toolExecutionError(id, "grok_search requires a non-empty `query` string.");
     }
+    let model;
+    try {
+      model = resolveModel({ explicit: args.model, kind: "search", config });
+    } catch (error) {
+      return toolExecutionError(id, error.message);
+    }
     const result = await run({
       prompt: query,
-      model: resolveModel({ explicit: args.model, kind: "search", config }),
+      model,
       webSearch: true,
       maxTurns: config.max_turns ?? undefined
     });
@@ -108,9 +122,15 @@ async function handleToolCall(id, params, { run, config }) {
     if (!prompt) {
       return toolExecutionError(id, "grok_ask requires a non-empty `prompt` string.");
     }
+    let model;
+    try {
+      model = resolveModel({ explicit: args.model, kind: "search", config });
+    } catch (error) {
+      return toolExecutionError(id, error.message);
+    }
     const result = await run({
       prompt,
-      model: resolveModel({ explicit: args.model, kind: "search", config }),
+      model,
       // explicit `search` arg wins; otherwise honor the configured web_search default
       webSearch: args.search === false ? false : args.search === true ? true : config.web_search !== false,
       maxTurns: config.max_turns ?? undefined

@@ -5,14 +5,20 @@ import os from "node:os";
 import path from "node:path";
 
 import { parseArgs } from "../scripts/lib/args.mjs";
-import { resolveModel, loadConfig, normalizeConfig } from "../scripts/lib/config.mjs";
+import {
+  resolveModel,
+  loadConfig,
+  normalizeConfig,
+  SUPPORTED_MODELS,
+  configuredModelIssues
+} from "../scripts/lib/config.mjs";
 import { buildGrokArgs, parseGrokJson, classifyGrokOutput, runGrok } from "../scripts/lib/grok.mjs";
 import { renderResult, truncate } from "../scripts/lib/render.mjs";
 
 test("args: parses value options, booleans, and positionals", () => {
   const cfg = { valueOptions: ["model"], booleanOptions: ["no-search"], aliasMap: { m: "model" } };
-  const { options, positionals } = parseArgs(["-m", "grok-build", "--no-search", "hello", "world"], cfg);
-  assert.equal(options.model, "grok-build");
+  const { options, positionals } = parseArgs(["-m", "grok-4.5", "--no-search", "hello", "world"], cfg);
+  assert.equal(options.model, "grok-4.5");
   assert.equal(options["no-search"], true);
   assert.deepEqual(positionals, ["hello", "world"]);
 });
@@ -24,22 +30,29 @@ test("args: -- passes the remainder through as positionals", () => {
 
 test("config: resolveModel precedence is explicit > kind > fallback", () => {
   const config = {
-    default_model: "grok-composer-2.5-fast",
-    search_model: "grok-build",
-    fallback_model: "grok-build"
+    default_model: "grok-4.5",
+    search_model: "grok-4.5",
+    fallback_model: "grok-composer-2.5-fast"
   };
-  assert.equal(resolveModel({ explicit: "x", kind: "default", config }), "x");
-  assert.equal(resolveModel({ kind: "default", config }), "grok-composer-2.5-fast");
-  assert.equal(resolveModel({ kind: "search", config }), "grok-build");
-  assert.equal(resolveModel({ kind: "default", config: { fallback_model: "grok-build" } }), "grok-build");
-  assert.equal(resolveModel({ kind: "default", config: {} }), "grok-build");
+  assert.equal(resolveModel({ explicit: "grok-composer-2.5-fast", kind: "default", config }), "grok-composer-2.5-fast");
+  assert.equal(resolveModel({ kind: "default", config }), "grok-4.5");
+  assert.equal(resolveModel({ kind: "search", config }), "grok-4.5");
+  assert.equal(resolveModel({ kind: "default", config: { fallback_model: "grok-composer-2.5-fast" } }), "grok-composer-2.5-fast");
+  assert.equal(resolveModel({ kind: "default", config: {} }), "grok-4.5");
+});
+
+test("config: only the current Grok Build catalog is supported", () => {
+  assert.deepEqual(SUPPORTED_MODELS, ["grok-4.5", "grok-composer-2.5-fast"]);
+  assert.throws(() => resolveModel({ explicit: "grok-build" }), /deprecated/i);
+  assert.throws(() => resolveModel({ explicit: "grok-4.3" }), /supported models/i);
+  assert.deepEqual(configuredModelIssues({ default_model: "grok-build" }), ["default_model=grok-build"]);
 });
 
 test("config: loadConfig returns the documented defaults", () => {
   const config = loadConfig();
-  assert.equal(config.default_model, "grok-composer-2.5-fast");
-  assert.equal(config.search_model, "grok-build");
-  assert.equal(config.fallback_model, "grok-build");
+  assert.equal(config.default_model, "grok-4.5");
+  assert.equal(config.search_model, "grok-4.5");
+  assert.equal(config.fallback_model, "grok-composer-2.5-fast");
   assert.equal(config.safety, "permissive");
   assert.equal(config.web_search, true);
 });
@@ -52,19 +65,19 @@ test("config: no_auto_update is NOT an advertised knob (--no-auto-update is alwa
   assert.ok(buildGrokArgs({ prompt: "x", model: "m" }).includes("--no-auto-update"));
 });
 
-test("config: normalizeConfig keeps valid local overrides and drops unknown keys", () => {
+test("config: normalizeConfig keeps well-formed local overrides and drops unknown keys", () => {
   const config = normalizeConfig({
-    default_model: " custom-default ",
-    search_model: " custom-search ",
-    fallback_model: " custom-fallback ",
+    default_model: " grok-composer-2.5-fast ",
+    search_model: " grok-4.5 ",
+    fallback_model: " grok-composer-2.5-fast ",
     safety: "preview",
     web_search: false,
     max_turns: 4,
     no_auto_update: false
   });
-  assert.equal(config.default_model, "custom-default");
-  assert.equal(config.search_model, "custom-search");
-  assert.equal(config.fallback_model, "custom-fallback");
+  assert.equal(config.default_model, "grok-composer-2.5-fast");
+  assert.equal(config.search_model, "grok-4.5");
+  assert.equal(config.fallback_model, "grok-composer-2.5-fast");
   assert.equal(config.safety, "preview");
   assert.equal(config.web_search, false);
   assert.equal(config.max_turns, 4);
@@ -78,7 +91,7 @@ test("config: invalid local overrides fall back to shipped defaults", () => {
     fs.writeFileSync(
       path.join(dir, ".grok", "grok-plugin.json"),
       JSON.stringify({
-        default_model: " local-default ",
+        default_model: " grok-composer-2.5-fast ",
         search_model: "",
         fallback_model: 42,
         safety: "dangerous",
@@ -88,9 +101,9 @@ test("config: invalid local overrides fall back to shipped defaults", () => {
       })
     );
     const config = loadConfig({ cwd: dir });
-    assert.equal(config.default_model, "local-default");
-    assert.equal(config.search_model, "grok-build");
-    assert.equal(config.fallback_model, "grok-build");
+    assert.equal(config.default_model, "grok-composer-2.5-fast");
+    assert.equal(config.search_model, "grok-4.5");
+    assert.equal(config.fallback_model, "grok-composer-2.5-fast");
     assert.equal(config.safety, "permissive");
     assert.equal(config.web_search, true);
     assert.equal(config.max_turns, null);
@@ -101,13 +114,13 @@ test("config: invalid local overrides fall back to shipped defaults", () => {
 });
 
 test("grok: buildGrokArgs yields the basic-ask shape", () => {
-  const args = buildGrokArgs({ prompt: "hi", model: "grok-build" });
+  const args = buildGrokArgs({ prompt: "hi", model: "grok-4.5" });
   assert.ok(args.includes("-p"));
   assert.ok(args.includes("hi"));
   assert.ok(args.includes("--output-format"));
   assert.ok(args.includes("json"));
   assert.ok(args.includes("-m"));
-  assert.ok(args.includes("grok-build"));
+  assert.ok(args.includes("grok-4.5"));
   assert.ok(args.includes("--no-auto-update"));
   assert.ok(!args.includes("--disable-web-search"));
   // -p must be immediately followed by the prompt
@@ -122,10 +135,17 @@ test("grok: buildGrokArgs adds --disable-web-search only when webSearch===false"
 
 test("grok: buildGrokArgs adds optional flags when provided", () => {
   const args = buildGrokArgs({ prompt: "x", model: "m", effort: "high", maxTurns: 3 });
-  assert.ok(args.includes("--effort"));
-  assert.equal(args[args.indexOf("--effort") + 1], "high");
+  assert.ok(args.includes("--reasoning-effort"));
+  assert.ok(!args.includes("--effort"));
+  assert.equal(args[args.indexOf("--reasoning-effort") + 1], "high");
   assert.ok(args.includes("--max-turns"));
   assert.equal(args[args.indexOf("--max-turns") + 1], "3");
+});
+
+test("grok: --reasoning-effort wins when both aliases are supplied", () => {
+  const args = buildGrokArgs({ prompt: "x", model: "m", effort: "low", reasoningEffort: "high" });
+  assert.equal(args.filter((arg) => arg === "--reasoning-effort").length, 1);
+  assert.equal(args[args.indexOf("--reasoning-effort") + 1], "high");
 });
 
 test("grok: parseGrokJson tolerates surrounding noise", () => {

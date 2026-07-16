@@ -9,7 +9,7 @@ test("hardening: special characters in a prompt pass through as one unescaped ar
   // Because args are handed to spawn as argv (no shell), nothing here is
   // interpolated or needs escaping — the prompt arrives at grok byte-for-byte.
   const nasty = 'quote " backtick ` dollar $HOME semicolon ; pipe | newline\nrm -rf /';
-  const args = buildGrokArgs({ prompt: nasty, model: "grok-build" });
+  const args = buildGrokArgs({ prompt: nasty, model: "grok-4.5" });
   assert.equal(args[args.indexOf("-p") + 1], nasty);
 });
 

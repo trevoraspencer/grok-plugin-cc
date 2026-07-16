@@ -1,5 +1,6 @@
 {
   "name": "grok-plugin-cc",
+  "description": "Unofficial Grok Build integration for Claude Code.",
   "owner": {
     "name": "Trevor Spencer"
   },

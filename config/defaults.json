@@ -1,7 +1,7 @@
 {
-  "default_model": "grok-composer-2.5-fast",
-  "search_model": "grok-build",
-  "fallback_model": "grok-build",
+  "default_model": "grok-4.5",
+  "search_model": "grok-4.5",
+  "fallback_model": "grok-composer-2.5-fast",
   "safety": "permissive",
   "web_search": true,
   "max_turns": null

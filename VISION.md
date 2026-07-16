@@ -2,7 +2,7 @@
 
 > **Status:** living document · **Trajectory:** public release (v0.1.0, MIT) · **License:** [MIT](LICENSE)
 > **Disclaimer:** Unofficial. Not affiliated with or endorsed by xAI. "Grok" and "Grok Build" are xAI's.
-> **Implementation:** v1 shipped 2026-06-14 and was open-sourced under [MIT](LICENSE) on GitHub on 2026-06-15. The current implementation uses `commands/` for slash-command prompts, a two-model routing config, a transient OS-temp job registry, and no `hooks/` or `agents/` directories. See [README.md](README.md) for the operational reference and install instructions.
+> **Implementation:** v1 shipped 2026-06-14 and was open-sourced under [MIT](LICENSE) on GitHub on 2026-06-15. The current implementation uses `commands/` for slash-command prompts, a two-model allowlisted routing config updated for the July 2026 catalog (`grok-4.5` for review/ask/search, `grok-composer-2.5-fast` as the fast alternative/fallback), a transient OS-temp job registry, and no `hooks/` or `agents/` directories. See [README.md](README.md) for the operational reference and install instructions.
 
 ## Executive Summary
 
@@ -51,12 +51,14 @@ Detach a `grok -p` call using **Claude Code's own background-bash** (`run_in_bac
 
 ### Models
 
-Two configurable routes are implemented:
+Two configurable routes are implemented, both allowlisted:
 
-- `default_model = grok-composer-2.5-fast` for `/grok:review`.
-- `search_model = grok-build` for `/grok:ask`, `grok_search`, and `grok_ask` because it searches reliably.
+- `default_model = grok-4.5` for `/grok:review`.
+- `search_model = grok-4.5` for `/grok:ask`, `grok_search`, and `grok_ask` (Grok 4.5 supports live web and X search).
 
-`fallback_model = grok-build` is used when the selected route has no usable slug. `--model`/`-m` overrides routing per call. The ask command also forwards `--effort`, `--reasoning-effort`, and `--max-turns`; effort flags only affect models that support the corresponding Grok CLI options.
+`fallback_model = grok-composer-2.5-fast` is used when the selected route has no usable ID. `--model`/`-m` overrides routing per call. As verified against the live Grok Build catalog on 2026-07-10, the supported IDs are `grok-4.5` and `grok-composer-2.5-fast`; older IDs (including `grok-build`) are intentionally deprecated by this plugin and rejected with a migration error at the dispatcher and MCP boundaries.
+
+The ask command also forwards `--max-turns`. `--effort` and `--reasoning-effort` are accepted as aliases and normalized to one `--reasoning-effort` CLI argument (the long form wins if both are supplied). Grok 4.5 supports low, medium, and high effort; Composer follows its server-provided configuration.
 
 ### Safety
 
@@ -80,7 +82,7 @@ Two configurable routes are implemented:
 
 ## Tech & Structure
 
-- **Language:** plain **`.mjs`** ES modules (no build step; trivial to fork/hand-edit). **Node 18+**, enforced by package metadata and reported by `/grok:setup`.
+- **Language:** plain **`.mjs`** ES modules (no build step; trivial to fork/hand-edit). **Node 18+**, declared in package metadata (`engines`) and checked/reported by `/grok:setup` (which warns below the floor).
 - **Grok CLI:** install via xAI's curl bootstrap (`curl -fsSL https://x.ai/cli/install.sh | bash`), **not npm**. Auth via `XAI_API_KEY` or SuperGrok / X Premium Plus sign-in. Grok's own config lives at `~/.grok/config.toml` (project override `./.grok/config.toml`).
 - **Plugin config:** version-controlled defaults in `config/defaults.json`, with a validated, git-ignored `.grok/grok-plugin.json` machine override. Command prompts live in `commands/*.md`; both are editable, committed where appropriate, and effective without a build.
 - **Repo layout:**
@@ -135,6 +137,6 @@ Personal in origin; **publicly released under [MIT](LICENSE)** on GitHub at [tre
 
 ## Open items to verify at scaffold time — RESOLVED (2026-06-14)
 
-- ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Verified slugs at implementation time were `grok-composer-2.5-fast` (review) and `grok-build` (ask/search). `fallback_model = grok-build`. All are centralized in `config/defaults.json`.
-- ~~Node floor against the installed `grok` version.~~ → Node 18+ floor (built and verified against Node 22; `grok` 0.2.51). `/grok:setup` warns below the floor.
+- ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Verified slugs at implementation time (2026-06-14) were `grok-composer-2.5-fast` (review) and `grok-build` (ask/search); re-verified 2026-07-10: `grok-4.5` is now the primary review/search model and `grok-composer-2.5-fast` the fast alternative/fallback. All centralized in `config/defaults.json` and enforced by `scripts/lib/config.mjs`.
+- ~~Node floor against the installed `grok` version.~~ → Node 18+ floor (built against Node 22; current compatibility re-verified with `grok` 0.2.93). `/grok:setup` warns below either floor.
 - ~~Whether Grok's live search is on by default under `-p` or needs a flag.~~ → Live search is **on by default** under `-p`; `--disable-web-search` turns it off. Note: the search worker can transiently fail (exit 0, empty text, `stopReason: Cancelled`), so the wrapper treats an empty answer as a failure and retries once.

@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { handleMessage, TOOLS } from "../scripts/mcp-server.mjs";
 
 const FAKE_CONFIG = {
-  default_model: "grok-composer-2.5-fast",
-  search_model: "grok-build",
-  fallback_model: "grok-build"
+  default_model: "grok-4.5",
+  search_model: "grok-4.5",
+  fallback_model: "grok-composer-2.5-fast"
 };
 
 test("mcp: initialize returns serverInfo.name=grok, tools capability, echoed protocol", async () => {
@@ -19,6 +19,7 @@ test("mcp: initialize returns serverInfo.name=grok, tools capability, echoed pro
     params: { protocolVersion: "2025-06-18" }
   });
   assert.equal(res.result.serverInfo.name, "grok");
+  assert.equal(res.result.serverInfo.version, "0.2.0");
   assert.ok(res.result.capabilities.tools);
   assert.equal(res.result.protocolVersion, "2025-06-18");
 });
@@ -42,6 +43,8 @@ test("mcp: tools/list returns exactly grok_search and grok_ask with required fie
   const ask = res.result.tools.find((t) => t.name === "grok_ask");
   assert.deepEqual(search.inputSchema.required, ["query"]);
   assert.deepEqual(ask.inputSchema.required, ["prompt"]);
+  assert.deepEqual(search.inputSchema.properties.model.enum, ["grok-4.5", "grok-composer-2.5-fast"]);
+  assert.deepEqual(ask.inputSchema.properties.model.enum, ["grok-4.5", "grok-composer-2.5-fast"]);
   // exported TOOLS matches the wire response
   assert.equal(TOOLS.length, 2);
 });
@@ -84,11 +87,27 @@ test("mcp: tools/call grok_search uses the search model + web search (fake runne
     },
     { run: fakeRun, config: FAKE_CONFIG }
   );
-  assert.equal(calls[0].model, "grok-build");
+  assert.equal(calls[0].model, "grok-4.5");
   assert.equal(calls[0].webSearch, true);
   assert.equal(res.result.content[0].type, "text");
   assert.ok(res.result.content[0].text.includes("answer"));
   assert.equal(res.result.isError, false);
+});
+
+test("mcp: legacy model overrides are rejected before invoking Grok", async () => {
+  let called = false;
+  const res = await handleMessage(
+    {
+      jsonrpc: "2.0",
+      id: 74,
+      method: "tools/call",
+      params: { name: "grok_ask", arguments: { prompt: "hi", model: "grok-build" } }
+    },
+    { run: async () => ((called = true), { ok: true, text: "x" }), config: FAKE_CONFIG }
+  );
+  assert.equal(called, false);
+  assert.equal(res.result.isError, true);
+  assert.match(res.result.content[0].text, /deprecated/i);
 });
 
 test("mcp: tools/call with empty query is a tool execution error (isError true)", async () => {

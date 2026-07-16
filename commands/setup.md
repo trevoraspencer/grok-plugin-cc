@@ -20,4 +20,4 @@ If it reports that grok is **not installed**, the fix is the curl bootstrap (do 
 curl -fsSL https://x.ai/cli/install.sh | bash
 ```
 
-If grok is installed but **not authenticated**, tell the user to set `XAI_API_KEY` or sign in with SuperGrok / X Premium+ (grok stores auth at `~/.grok/auth.json`). Never print the key value.
+If grok is installed but **not authenticated**, tell the user to run `grok login` (or `grok login --device-auth`) or set `XAI_API_KEY`. The setup check validates the live CLI state, so a stale `~/.grok/auth.json` file does not count as authenticated. Never print the key value or any other credential value.
