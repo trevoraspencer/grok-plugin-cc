@@ -90,7 +90,7 @@ Claude can call these autonomously when it needs current information.
 
 ## Configuration
 
-Version-controlled defaults live in [`config/defaults.json`](config/defaults.json). A machine-local override may be placed at `./.grok/grok-plugin.json` (git-ignored). Overrides are validated per key: `safety` must be `permissive` or `preview`, `web_search` must be boolean, and `max_turns` must be `null` or a positive integer; invalid and unknown values are ignored in favor of the shipped defaults. Model keys must name one of the two supported model IDs — an unsupported or legacy ID (including `grok-build`) is flagged by `/grok:setup` and rejected with a migration error when the model is resolved, instead of being forwarded to the CLI.
+Version-controlled defaults live in [`config/defaults.json`](config/defaults.json). A machine-local override may be placed at `./.grok/grok-plugin.json` (git-ignored). Overrides are validated per key: `safety` must be `permissive` or `preview`, `web_search` must be boolean, `max_turns` must be `null` or a positive integer, and `timeout_ms` must be a positive integer no greater than `2147483647`; invalid and unknown values are ignored in favor of the shipped defaults. Model keys must name one of the two supported model IDs — an unsupported or legacy ID (including `grok-build`) is flagged by `/grok:setup` and rejected with a migration error when the model is resolved, instead of being forwarded to the CLI.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -100,6 +100,7 @@ Version-controlled defaults live in [`config/defaults.json`](config/defaults.jso
 | `safety` | `permissive` | reserved for future write-capable commands; current commands remain read-only regardless of this value |
 | `web_search` | `true` | live-search default for `/grok:ask` and the `grok_ask` MCP tool (the `grok_search` tool always searches, regardless of this) |
 | `max_turns` | `null` | cap on grok agent turns for `ask` and the MCP tools; `null` = no cap |
+| `timeout_ms` | `900000` | wall-clock deadline for each live Grok call (15 minutes); override locally for unusually long workloads |
 
 Per-call flags always win over config: `--model`/`-m` overrides the model ID, and `--no-search`/`--search` override the `web_search` default. The plugin intentionally exposes only the two models in the current Grok Build catalog:
 
@@ -118,7 +119,7 @@ Legacy or custom IDs (including `grok-build`) are rejected with a migration erro
 
 - **Headless + MCP, not ACP.** ACP casts Grok as the agent expecting an editor client; that's the wrong fit for "Claude Code calls Grok." This plugin uses headless one-shot calls plus an MCP server.
 - **No kept artifacts.** Output renders inline. Background jobs use a transient registry under the OS temp dir — never committed.
-- **Drift-resistant.** All `grok` invocation goes through one choke-point (`scripts/lib/grok.mjs`) with a two-model allowlist, a hard-coded fallback, and defensive JSON parsing. grok can exit 0 with an empty answer when its web-search worker transiently fails; the wrapper treats that as a failure and retries once.
+- **Drift-resistant.** All `grok` invocation goes through one choke-point (`scripts/lib/grok.mjs`) with a two-model allowlist, a hard-coded fallback, defensive JSON parsing, a configurable 15-minute deadline, and a bounded 4 MiB combined output capture. Calls that exceed either bound are terminated and reported as failures rather than returning truncated JSON. grok can exit 0 with an empty answer when its web-search worker transiently fails; the wrapper treats that as a failure and retries once.
 - **Auth/key safety.** `XAI_API_KEY` is only ever presence-checked, never printed or logged.
 
 ## Development

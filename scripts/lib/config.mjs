@@ -25,11 +25,13 @@ const HARD_DEFAULTS = Object.freeze({
   fallback_model: "grok-composer-2.5-fast",
   safety: "permissive",
   web_search: true,
-  max_turns: null
+  max_turns: null,
+  timeout_ms: 900_000
 });
 
 const MODEL_KEYS = ["default_model", "search_model", "fallback_model"];
 const SAFETY_MODES = new Set(["permissive", "preview"]);
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 function readJsonSafe(file) {
   try {
@@ -73,6 +75,10 @@ export function normalizeConfig(config, fallback = HARD_DEFAULTS) {
     normalized.max_turns = null;
   } else if (Number.isInteger(source.max_turns) && source.max_turns > 0) {
     normalized.max_turns = source.max_turns;
+  }
+
+  if (Number.isInteger(source.timeout_ms) && source.timeout_ms > 0 && source.timeout_ms <= MAX_TIMEOUT_MS) {
+    normalized.timeout_ms = source.timeout_ms;
   }
 
   return normalized;

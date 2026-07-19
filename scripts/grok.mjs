@@ -108,7 +108,8 @@ async function cmdAsk(parsed, config) {
     webSearch: resolveWebSearch(parsed.options, config),
     effort: parsed.options.effort,
     reasoningEffort: parsed.options["reasoning-effort"],
-    maxTurns: parsed.options["max-turns"] ?? config.max_turns ?? undefined
+    maxTurns: parsed.options["max-turns"] ?? config.max_turns ?? undefined,
+    timeoutMs: config.timeout_ms ?? undefined
   };
 
   if (parsed.options["print-args"]) {
@@ -149,7 +150,8 @@ async function cmdReview(parsed, config) {
     prompt: buildReviewPrompt(diffInfo),
     model: resolveModel({ explicit: parsed.options.model, kind: "default", config }),
     // A code review is focused on the diff; web search is off unless asked for.
-    webSearch: Boolean(parsed.options.search)
+    webSearch: Boolean(parsed.options.search),
+    timeoutMs: config.timeout_ms ?? undefined
   };
 
   // --print-args is a pure dry-run: report the intended grok invocation
