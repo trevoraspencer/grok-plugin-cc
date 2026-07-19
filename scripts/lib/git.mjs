@@ -12,6 +12,7 @@ import { truncate } from "./render.mjs";
 // multi-byte text can weigh more on the wire, but the cap is self-consistent.
 const MAX_DIFF_CHARS = 100 * 1024;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
+const BIGINT_STATS = { bigint: true };
 
 function git(args, cwd = process.cwd()) {
   const result = spawnSync("git", args, {
@@ -80,30 +81,108 @@ function listUntracked(cwd) {
     .filter(Boolean);
 }
 
-function renderUntracked(cwd, relativePath) {
+function pathIsWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+function hasFileIdentity(stat) {
+  // BigInt stats avoid inode truncation. An unavailable/zero inode cannot
+  // establish identity portably, so fail closed rather than reading.
+  return (
+    typeof stat?.dev === "bigint" &&
+    typeof stat?.ino === "bigint" &&
+    stat.ino !== 0n
+  );
+}
+
+function sameFileIdentity(before, after) {
+  return before.dev === after.dev && before.ino === after.ino;
+}
+
+function readBounded(descriptor, fileSystem) {
+  const buffer = Buffer.alloc(MAX_UNTRACKED_BYTES + 1);
+  let offset = 0;
+  while (offset < buffer.length) {
+    const bytesRead = fileSystem.readSync(descriptor, buffer, offset, buffer.length - offset, null);
+    if (bytesRead === 0) {
+      break;
+    }
+    offset += bytesRead;
+  }
+  return buffer.subarray(0, offset);
+}
+
+export function renderUntracked(cwd, relativePath, { checkoutRoot, fileSystem = fs } = {}) {
   const absolute = path.join(cwd, relativePath);
   let stat;
   try {
-    stat = fs.statSync(absolute);
+    if (checkoutRoot === undefined) {
+      checkoutRoot = fileSystem.realpathSync(cwd);
+    }
+    stat = fileSystem.lstatSync(absolute, BIGINT_STATS);
   } catch {
     return `### ${relativePath}\n(skipped: unreadable)`;
   }
-  if (stat.isDirectory()) {
-    return `### ${relativePath}\n(skipped: directory)`;
+  if (stat.isSymbolicLink()) {
+    return `### ${relativePath}\n(skipped: symbolic link)`;
   }
-  if (stat.size > MAX_UNTRACKED_BYTES) {
-    return `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} limit)`;
+  if (!stat.isFile()) {
+    return `### ${relativePath}\n(skipped: not a regular file)`;
   }
-  let buffer;
+
+  let resolved;
   try {
-    buffer = fs.readFileSync(absolute);
+    resolved = fileSystem.realpathSync(absolute);
   } catch {
     return `### ${relativePath}\n(skipped: unreadable)`;
   }
-  if (buffer.includes(0)) {
-    return `### ${relativePath}\n(skipped: binary)`;
+  if (
+    typeof checkoutRoot !== "string" ||
+    typeof resolved !== "string" ||
+    !pathIsWithin(checkoutRoot, resolved)
+  ) {
+    return `### ${relativePath}\n(skipped: outside working tree)`;
   }
-  return `### ${relativePath}\n\`\`\`\n${buffer.toString("utf8").trimEnd()}\n\`\`\``;
+
+  let descriptor;
+  try {
+    // O_NOFOLLOW blocks final-component swaps where available. The identity
+    // check below also covers platforms without it and parent-directory swaps.
+    const noFollow = fileSystem.constants.O_NOFOLLOW ?? 0;
+    descriptor = fileSystem.openSync(absolute, fileSystem.constants.O_RDONLY | noFollow);
+    const openedStat = fileSystem.fstatSync(descriptor, BIGINT_STATS);
+    if (!openedStat.isFile()) {
+      return `### ${relativePath}\n(skipped: not a regular file)`;
+    }
+    if (!hasFileIdentity(stat) || !hasFileIdentity(openedStat)) {
+      return `### ${relativePath}\n(skipped: file identity unavailable)`;
+    }
+    if (!sameFileIdentity(stat, openedStat)) {
+      return `### ${relativePath}\n(skipped: file changed while opening)`;
+    }
+    if (openedStat.size > BigInt(MAX_UNTRACKED_BYTES)) {
+      return `### ${relativePath}\n(skipped: ${openedStat.size} bytes exceeds ${MAX_UNTRACKED_BYTES} limit)`;
+    }
+    const buffer = readBounded(descriptor, fileSystem);
+    if (buffer.length > MAX_UNTRACKED_BYTES) {
+      return `### ${relativePath}\n(skipped: file grew beyond ${MAX_UNTRACKED_BYTES} byte limit)`;
+    }
+    if (buffer.includes(0)) {
+      return `### ${relativePath}\n(skipped: binary)`;
+    }
+    return `### ${relativePath}\n\`\`\`\n${buffer.toString("utf8").trimEnd()}\n\`\`\``;
+  } catch {
+    return `### ${relativePath}\n(skipped: unreadable)`;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        fileSystem.closeSync(descriptor);
+      } catch {
+        // The read result is already determined; close errors are non-actionable here.
+      }
+    }
+  }
 }
 
 // Pure target selection (no git calls) — unit-testable.
@@ -135,6 +214,16 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
       hasChanges: false,
       error: "Not a git repository. Run /grok:review from inside a git repository."
     };
+  }
+
+  // Capture the checkout's canonical identity before any working-tree
+  // enumeration so replacing the cwd path cannot redefine the confinement
+  // boundary between Git listing an entry and this process opening it.
+  let checkoutRoot = null;
+  try {
+    checkoutRoot = fs.realpathSync(cwd);
+  } catch {
+    // Untracked files will fail closed; tracked Git output can still be useful.
   }
 
   const target = selectReviewTarget({ scope, base });
@@ -191,7 +280,9 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
   const status = statusShort(cwd);
   const tracked = workingTreeDiff(cwd);
   const untracked = listUntracked(cwd);
-  const untrackedBlock = untracked.map((file) => renderUntracked(cwd, file)).join("\n\n");
+  const untrackedBlock = untracked
+    .map((file) => renderUntracked(cwd, file, { checkoutRoot }))
+    .join("\n\n");
   const diff = [
     status ? `# git status\n${status}` : "",
     tracked ? `# tracked changes (staged + unstaged)\n${tracked}` : "",
