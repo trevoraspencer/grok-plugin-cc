@@ -16,7 +16,9 @@ import {
   readOutput,
   readJob,
   listJobs,
-  cancelJob
+  cancelJob,
+  isValidJobId,
+  isValidJobPid
 } from "../scripts/lib/jobs.mjs";
 import { renderJobsTable, renderJobDetail, formatElapsed } from "../scripts/lib/render.mjs";
 
@@ -164,6 +166,189 @@ test("jobs: tolerates a missing jobs dir", () => {
   assert.equal(readJob("nope"), null);
   assert.equal(readOutput("nope"), null);
   assert.equal(cancelJob("nope").ok, false);
+});
+
+test("jobs: validates the canonical job ID format", () => {
+  assert.equal(isValidJobId("1700000000000-deadbeef"), true);
+  for (const id of [
+    "170000000000-deadbeef",
+    "1700000000000-DEADBEEF",
+    "../outside",
+    "/tmp/outside",
+    "1700000000000-deadbeef/child",
+    "1700000000000-deadbeef\\child"
+  ]) {
+    assert.equal(isValidJobId(id), false, `expected ${JSON.stringify(id)} to be invalid`);
+  }
+});
+
+test("jobs: validates process IDs as positive safe integers", () => {
+  assert.equal(isValidJobPid(1), true);
+  assert.equal(isValidJobPid(process.pid), true);
+  assert.equal(isValidJobPid(Number.MAX_SAFE_INTEGER), true);
+  for (const pid of [0, -1, 1.5, "123", Number.MAX_SAFE_INTEGER + 1, NaN, Infinity]) {
+    assert.equal(isValidJobPid(pid), false, `expected ${String(pid)} to be invalid`);
+  }
+});
+
+test("jobs: invalid persisted wrapper or child process IDs never trigger signals", () => {
+  const invalidPids = [0, -1, 1.5, "123", Number.MAX_SAFE_INTEGER + 1];
+  const originalKill = process.kill;
+  let signalCalls = 0;
+  process.kill = () => {
+    signalCalls += 1;
+    return true;
+  };
+  try {
+    for (const field of ["pid", "childPid"]) {
+      for (const invalidPid of invalidPids) {
+        const dir = freshJobsDir();
+        const id = "1700000000000-deadbeef";
+        const record = {
+          id,
+          kind: "ask",
+          status: "running",
+          pid: process.pid,
+          childPid: null,
+          startedAt: new Date().toISOString()
+        };
+        record[field] = invalidPid;
+        const file = path.join(dir, `${id}.json`);
+        const serialized = JSON.stringify(record);
+        fs.writeFileSync(file, serialized);
+
+        assert.equal(readJob(id), null, `${field}=${String(invalidPid)} should reject reads`);
+        assert.deepEqual(listJobs(), [], `${field}=${String(invalidPid)} should reject listing`);
+        assert.equal(markDone(id, "overwrite"), null, `${field}=${String(invalidPid)} should reject updates`);
+        assert.equal(cancelJob(id).ok, false, `${field}=${String(invalidPid)} should reject cancel`);
+        assert.equal(fs.readFileSync(file, "utf8"), serialized);
+      }
+    }
+  } finally {
+    process.kill = originalKill;
+  }
+
+  assert.equal(signalCalls, 0);
+});
+
+test("jobs: invalid process IDs cannot enter records through update helpers", () => {
+  freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  for (const pid of [0, -1, 1.5, "123", Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(markRunning(job.id, pid), null);
+    assert.equal(recordChildPid(job.id, pid), null);
+  }
+  const unchanged = readJob(job.id);
+  assert.equal(unchanged.status, "queued");
+  assert.equal(unchanged.pid, null);
+  assert.equal(unchanged.childPid, null);
+});
+
+test("jobs: a running record without a process ID fails closed without probing a process group", () => {
+  const dir = freshJobsDir();
+  const id = "1700000000000-deadbeef";
+  fs.writeFileSync(
+    path.join(dir, `${id}.json`),
+    JSON.stringify({
+      id,
+      kind: "ask",
+      status: "running",
+      pid: null,
+      childPid: null,
+      startedAt: new Date().toISOString()
+    })
+  );
+
+  const originalKill = process.kill;
+  let signalCalls = 0;
+  process.kill = () => {
+    signalCalls += 1;
+    return true;
+  };
+  try {
+    const seen = readJob(id);
+    assert.equal(seen.status, "failed");
+    assert.match(seen.summary, /no valid running process id/);
+  } finally {
+    process.kill = originalKill;
+  }
+  assert.equal(signalCalls, 0);
+});
+
+test("jobs: traversal IDs cannot read, write, or signal outside the jobs directory", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-jobs-traversal-test-"));
+  const dir = path.join(root, "jobs");
+  fs.mkdirSync(dir);
+  process.env.GROK_JOBS_DIR = dir;
+
+  const traversalId = "../outside";
+  const outsideRecordPath = path.join(root, "outside.json");
+  const outsideOutputPath = path.join(root, "outside.out");
+  const outsideRecord = JSON.stringify({
+    id: traversalId,
+    kind: "ask",
+    status: "queued",
+    pid: 12345,
+    childPid: 23456,
+    startedAt: new Date().toISOString()
+  });
+  fs.writeFileSync(outsideRecordPath, outsideRecord);
+  fs.writeFileSync(outsideOutputPath, "outside secret");
+
+  const originalKill = process.kill;
+  let signalCalls = 0;
+  process.kill = () => {
+    signalCalls += 1;
+    return true;
+  };
+  try {
+    assert.equal(readJob(traversalId), null);
+    assert.equal(readOutput(traversalId), null);
+    assert.equal(markDone(traversalId, "overwrite"), null);
+    writeOutput(traversalId, "overwrite");
+    assert.equal(cancelJob(traversalId).ok, false);
+  } finally {
+    process.kill = originalKill;
+  }
+
+  assert.equal(signalCalls, 0);
+  assert.equal(fs.readFileSync(outsideRecordPath, "utf8"), outsideRecord);
+  assert.equal(fs.readFileSync(outsideOutputPath, "utf8"), "outside secret");
+});
+
+test("jobs: a record ID must exactly match its canonical filename before updates or signals", () => {
+  const dir = freshJobsDir();
+  const requestedId = "1700000000000-deadbeef";
+  const embeddedId = "1700000000001-cafebabe";
+  const requestedPath = path.join(dir, `${requestedId}.json`);
+  const record = JSON.stringify({
+    id: embeddedId,
+    kind: "ask",
+    status: "queued",
+    pid: 12345,
+    childPid: 23456,
+    startedAt: new Date().toISOString()
+  });
+  fs.writeFileSync(requestedPath, record);
+
+  const originalKill = process.kill;
+  let signalCalls = 0;
+  process.kill = () => {
+    signalCalls += 1;
+    return true;
+  };
+  try {
+    assert.equal(readJob(requestedId), null);
+    assert.equal(markDone(requestedId, "overwrite"), null);
+    assert.equal(cancelJob(requestedId).ok, false);
+    assert.deepEqual(listJobs(), []);
+  } finally {
+    process.kill = originalKill;
+  }
+
+  assert.equal(signalCalls, 0);
+  assert.equal(fs.readFileSync(requestedPath, "utf8"), record);
+  assert.equal(fs.existsSync(path.join(dir, `${embeddedId}.json`)), false);
 });
 
 test("render: job table and detail format cleanly", () => {
