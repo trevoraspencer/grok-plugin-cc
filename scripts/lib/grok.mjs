@@ -123,6 +123,20 @@ const MISSING_CLI_HINT =
 
 const TRANSIENT_STDERR = /Auth\(|Authorization|Transport channel closed|temporarily|rate.?limit/i;
 
+// Live calls may legitimately spend several minutes on web search or a large
+// review, so the default is deliberately generous while still bounding a
+// wedged CLI. The capture limit is combined across stdout and stderr: once it
+// is exceeded, the response cannot be trusted as complete JSON and the child
+// is terminated instead of retaining or returning a truncated payload.
+export const DEFAULT_GROK_TIMEOUT_MS = 15 * 60 * 1000;
+export const DEFAULT_GROK_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const TERMINATION_GRACE_MS = 1000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+function positiveIntegerOr(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  return Number.isInteger(value) && value > 0 && value <= max ? value : fallback;
+}
+
 // Turn a finished grok invocation (stdout/stderr/exit code) into a result
 // object. Pure + testable. Critically: grok exits 0 even when its web-search
 // worker fails — the answer comes back empty with stopReason "Cancelled". We
@@ -189,6 +203,8 @@ export function classifyGrokOutput({ stdout = "", stderr = "", code = 0 } = {}) 
 function spawnGrok(opts) {
   const args = buildGrokArgs(opts);
   const bin = grokBinary();
+  const timeoutMs = positiveIntegerOr(opts.timeoutMs, DEFAULT_GROK_TIMEOUT_MS, MAX_TIMER_DELAY_MS);
+  const maxOutputBytes = positiveIntegerOr(opts.maxOutputBytes, DEFAULT_GROK_MAX_OUTPUT_BYTES);
 
   return new Promise((resolve) => {
     let child;
@@ -210,32 +226,107 @@ function spawnGrok(opts) {
       }
     }
 
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let capturedBytes = 0;
+    let termination = null;
+    let timeoutTimer = null;
+    let killTimer = null;
+    let closed = false;
     let settled = false;
+
+    const clearTimers = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+    };
+
+    const capturedText = (chunks) => Buffer.concat(chunks).toString("utf8");
 
     const settle = (value) => {
       if (settled) return;
       settled = true;
+      clearTimers();
       resolve(value);
     };
 
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
+    const terminate = (reason) => {
+      if (termination) return;
+      termination = reason;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // The close/error handlers below still produce the bounded failure.
+      }
+      killTimer = setTimeout(() => {
+        if (closed) return;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // If the process exited between the close check and kill, close will
+          // still settle the promise. SIGKILL is only the timeout fallback.
+        }
+      }, TERMINATION_GRACE_MS);
+      killTimer.unref?.();
+    };
+
+    const capture = (chunks, chunk) => {
+      if (termination) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const remaining = maxOutputBytes - capturedBytes;
+      if (buffer.length <= remaining) {
+        chunks.push(Buffer.from(buffer));
+        capturedBytes += buffer.length;
+        return;
+      }
+      if (remaining > 0) {
+        chunks.push(Buffer.from(buffer.subarray(0, remaining)));
+        capturedBytes = maxOutputBytes;
+      }
+      terminate({ type: "output_limit" });
+    };
+
+    child.stdout.on("data", (chunk) => capture(stdoutChunks, chunk));
+    child.stderr.on("data", (chunk) => capture(stderrChunks, chunk));
 
     child.on("error", (error) => {
       if (error && error.code === "ENOENT") {
         settle(failure({ error: `grok CLI not found (tried "${bin}"). ${MISSING_CLI_HINT}` }));
         return;
       }
-      settle(failure({ error: error ? error.message : "spawn error", stderr }));
+      settle(failure({ error: error ? error.message : "spawn error", stderr: capturedText(stderrChunks) }));
     });
 
-    child.on("close", (code) => settle(classifyGrokOutput({ stdout, stderr, code: code ?? 0 })));
+    child.on("close", (code) => {
+      closed = true;
+      const stdout = capturedText(stdoutChunks);
+      const stderr = capturedText(stderrChunks);
+      if (termination?.type === "timeout") {
+        settle(
+          failure({
+            stderr,
+            error:
+              `Grok call timed out after ${timeoutMs} ms and was terminated. ` +
+              "Increase `timeout_ms` in .grok/grok-plugin.json for a legitimately longer workload, or retry the call."
+          })
+        );
+        return;
+      }
+      if (termination?.type === "output_limit") {
+        settle(
+          failure({
+            stderr,
+            error:
+              `Grok output exceeded the ${maxOutputBytes}-byte combined capture limit and was terminated. ` +
+              "Reduce the requested output or max turns, then retry the call."
+          })
+        );
+        return;
+      }
+      settle(classifyGrokOutput({ stdout, stderr, code: code ?? 0 }));
+    });
+
+    timeoutTimer = setTimeout(() => terminate({ type: "timeout" }), timeoutMs);
+    timeoutTimer.unref?.();
   });
 }
 

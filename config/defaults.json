@@ -4,5 +4,6 @@
   "fallback_model": "grok-composer-2.5-fast",
   "safety": "permissive",
   "web_search": true,
-  "max_turns": null
+  "max_turns": null,
+  "timeout_ms": 900000
 }

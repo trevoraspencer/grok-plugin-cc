@@ -195,13 +195,13 @@ test("mcp: grok_search always searches regardless of config web_search=false", a
   assert.equal(calls[0].webSearch, true);
 });
 
-test("mcp: grok_ask and grok_search pass config.max_turns through to the runner", async () => {
+test("mcp: grok_ask and grok_search pass process bounds through to the runner", async () => {
   const calls = [];
   const fakeRun = async (opts) => {
     calls.push(opts);
     return { ok: true, text: "x" };
   };
-  const config = { ...FAKE_CONFIG, max_turns: 5 };
+  const config = { ...FAKE_CONFIG, max_turns: 5, timeout_ms: 120_000 };
   await handleMessage(
     { jsonrpc: "2.0", id: 81, method: "tools/call", params: { name: "grok_ask", arguments: { prompt: "hi" } } },
     { run: fakeRun, config }
@@ -212,6 +212,8 @@ test("mcp: grok_ask and grok_search pass config.max_turns through to the runner"
   );
   assert.equal(calls[0].maxTurns, 5);
   assert.equal(calls[1].maxTurns, 5);
+  assert.equal(calls[0].timeoutMs, 120_000);
+  assert.equal(calls[1].timeoutMs, 120_000);
 });
 
 test("mcp: max_turns null/absent leaves maxTurns undefined", async () => {

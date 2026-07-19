@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parseArgs } from "../scripts/lib/args.mjs";
 import {
@@ -12,8 +13,40 @@ import {
   SUPPORTED_MODELS,
   configuredModelIssues
 } from "../scripts/lib/config.mjs";
-import { buildGrokArgs, parseGrokJson, classifyGrokOutput, runGrok } from "../scripts/lib/grok.mjs";
+import {
+  buildGrokArgs,
+  parseGrokJson,
+  classifyGrokOutput,
+  runGrok,
+  DEFAULT_GROK_TIMEOUT_MS,
+  DEFAULT_GROK_MAX_OUTPUT_BYTES
+} from "../scripts/lib/grok.mjs";
 import { renderResult, truncate } from "../scripts/lib/render.mjs";
+
+const GROK_PROCESS_FIXTURE = fileURLToPath(new URL("./fixtures/grok-process-fixture.mjs", import.meta.url));
+
+async function withGrokFixture(mode, callback) {
+  const previousBin = process.env.GROK_BIN;
+  const previousMode = process.env.GROK_TEST_FIXTURE_MODE;
+  const previousBytes = process.env.GROK_TEST_FIXTURE_BYTES;
+  process.env.GROK_BIN = GROK_PROCESS_FIXTURE;
+  process.env.GROK_TEST_FIXTURE_MODE = mode;
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of [
+      ["GROK_BIN", previousBin],
+      ["GROK_TEST_FIXTURE_MODE", previousMode],
+      ["GROK_TEST_FIXTURE_BYTES", previousBytes]
+    ]) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 test("args: parses value options, booleans, and positionals", () => {
   const cfg = { valueOptions: ["model"], booleanOptions: ["no-search"], aliasMap: { m: "model" } };
@@ -55,6 +88,7 @@ test("config: loadConfig returns the documented defaults", () => {
   assert.equal(config.fallback_model, "grok-composer-2.5-fast");
   assert.equal(config.safety, "permissive");
   assert.equal(config.web_search, true);
+  assert.equal(config.timeout_ms, 900_000);
 });
 
 test("config: no_auto_update is NOT an advertised knob (--no-auto-update is always-on)", () => {
@@ -73,6 +107,7 @@ test("config: normalizeConfig keeps well-formed local overrides and drops unknow
     safety: "preview",
     web_search: false,
     max_turns: 4,
+    timeout_ms: 120_000,
     no_auto_update: false
   });
   assert.equal(config.default_model, "grok-composer-2.5-fast");
@@ -81,6 +116,7 @@ test("config: normalizeConfig keeps well-formed local overrides and drops unknow
   assert.equal(config.safety, "preview");
   assert.equal(config.web_search, false);
   assert.equal(config.max_turns, 4);
+  assert.equal(config.timeout_ms, 120_000);
   assert.equal("no_auto_update" in config, false);
 });
 
@@ -97,6 +133,7 @@ test("config: invalid local overrides fall back to shipped defaults", () => {
         safety: "dangerous",
         web_search: "false",
         max_turns: "10",
+        timeout_ms: Number.MAX_SAFE_INTEGER,
         no_auto_update: false
       })
     );
@@ -107,6 +144,7 @@ test("config: invalid local overrides fall back to shipped defaults", () => {
     assert.equal(config.safety, "permissive");
     assert.equal(config.web_search, true);
     assert.equal(config.max_turns, null);
+    assert.equal(config.timeout_ms, 900_000);
     assert.equal("no_auto_update" in config, false);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -204,6 +242,56 @@ test("grok: runGrok exposes each spawned child via onSpawn (pid recordable)", as
       process.env.GROK_BIN = previous;
     }
   }
+});
+
+test("grok: live calls use conservative bounded defaults", () => {
+  assert.equal(DEFAULT_GROK_TIMEOUT_MS, 15 * 60 * 1000);
+  assert.equal(DEFAULT_GROK_MAX_OUTPUT_BYTES, 4 * 1024 * 1024);
+});
+
+test("grok: runGrok terminates a timed-out child with actionable guidance", async () => {
+  await withGrokFixture("hang", async () => {
+    let childPid;
+    const startedAt = Date.now();
+    const result = await runGrok({
+      prompt: "offline timeout fixture",
+      retries: 0,
+      timeoutMs: 250,
+      onSpawn: (child) => {
+        childPid = child.pid;
+      }
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.attempts, 1);
+    assert.equal(result.transient, false);
+    assert.match(result.error, /timed out after 250 ms/i);
+    assert.match(result.error, /timeout_ms/);
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(elapsedMs >= 1000, "timeout fixture should exercise the SIGKILL grace-period fallback");
+    assert.ok(elapsedMs < 3000, "timed-out fixture should be terminated promptly");
+    assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH");
+  });
+});
+
+test("grok: runGrok terminates output that exceeds the combined capture cap", async () => {
+  await withGrokFixture("oversized-output", async () => {
+    process.env.GROK_TEST_FIXTURE_BYTES = "65536";
+    const result = await runGrok({
+      prompt: "offline output fixture",
+      retries: 0,
+      timeoutMs: 2000,
+      maxOutputBytes: 1024
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.attempts, 1);
+    assert.equal(result.transient, false);
+    assert.equal(result.raw, null);
+    assert.equal(result.text, "");
+    assert.match(result.error, /exceeded the 1024-byte combined capture limit/i);
+    assert.match(result.error, /reduce the requested output or max turns/i);
+  });
 });
 
 test("render: renderResult includes text and renders an error block", () => {

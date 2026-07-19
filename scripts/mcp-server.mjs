@@ -112,7 +112,8 @@ async function handleToolCall(id, params, { run, config }) {
       prompt: query,
       model,
       webSearch: true,
-      maxTurns: config.max_turns ?? undefined
+      maxTurns: config.max_turns ?? undefined,
+      timeoutMs: config.timeout_ms ?? undefined
     });
     return toolResult(id, result);
   }
@@ -133,7 +134,8 @@ async function handleToolCall(id, params, { run, config }) {
       model,
       // explicit `search` arg wins; otherwise honor the configured web_search default
       webSearch: args.search === false ? false : args.search === true ? true : config.web_search !== false,
-      maxTurns: config.max_turns ?? undefined
+      maxTurns: config.max_turns ?? undefined,
+      timeoutMs: config.timeout_ms ?? undefined
     });
     return toolResult(id, result);
   }
