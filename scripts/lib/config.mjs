@@ -3,7 +3,7 @@
 // Precedence for config values: repo override (./.grok/grok-plugin.json) >
 // shipped defaults (config/defaults.json) > hard-coded safety net.
 // Precedence for the model slug: explicit -m/--model > the kind's configured
-// slug (default_model / search_model) > fallback_model > "grok-build".
+// slug (default_model / search_model) > fallback_model > grok-4.5.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -16,10 +16,13 @@ export const DEFAULTS_PATH = path.join(PLUGIN_ROOT, "config", "defaults.json");
 
 // Hard-coded safety net so the tools still run if config/defaults.json is
 // missing or corrupt (drift mitigation — see ROADMAP risk #2).
+export const SUPPORTED_MODELS = Object.freeze(["grok-4.5", "grok-composer-2.5-fast"]);
+const SUPPORTED_MODEL_SET = new Set(SUPPORTED_MODELS);
+
 const HARD_DEFAULTS = Object.freeze({
-  default_model: "grok-composer-2.5-fast",
-  search_model: "grok-build",
-  fallback_model: "grok-build",
+  default_model: "grok-4.5",
+  search_model: "grok-4.5",
+  fallback_model: "grok-composer-2.5-fast",
   safety: "permissive",
   web_search: true,
   max_turns: null
@@ -77,16 +80,38 @@ export function normalizeConfig(config, fallback = HARD_DEFAULTS) {
 
 export function resolveModel({ explicit, kind = "default", config = {} } = {}) {
   if (explicit && String(explicit).trim()) {
-    return String(explicit).trim();
+    return requireSupportedModel(String(explicit).trim());
   }
   const key = kind === "search" ? "search_model" : "default_model";
   const chosen = config[key];
   if (chosen && String(chosen).trim()) {
-    return String(chosen).trim();
+    return requireSupportedModel(String(chosen).trim(), key);
   }
   const fallback = config.fallback_model;
   if (fallback && String(fallback).trim()) {
-    return String(fallback).trim();
+    return requireSupportedModel(String(fallback).trim(), "fallback_model");
   }
-  return "grok-build";
+  return HARD_DEFAULTS.default_model;
+}
+
+export function isSupportedModel(model) {
+  return typeof model === "string" && SUPPORTED_MODEL_SET.has(model.trim());
+}
+
+export function requireSupportedModel(model, source = "model") {
+  const normalized = String(model ?? "").trim();
+  if (SUPPORTED_MODEL_SET.has(normalized)) {
+    return normalized;
+  }
+  throw new Error(
+    `Unsupported ${source} \"${normalized || "(empty)"}\". Supported models: ${SUPPORTED_MODELS.join(", ")}. ` +
+      "Legacy model IDs such as grok-build are deprecated by this plugin."
+  );
+}
+
+export function configuredModelIssues(config = {}) {
+  return MODEL_KEYS.flatMap((key) => {
+    const value = config[key];
+    return value && !isSupportedModel(value) ? [`${key}=${String(value).trim()}`] : [];
+  });
 }
