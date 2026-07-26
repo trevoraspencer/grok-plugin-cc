@@ -149,7 +149,8 @@ test("mcp: runtime validation matches strict tool schemas before invoking Grok",
     { name: "grok_ask", arguments: { prompt: 42 } },
     { name: "grok_ask", arguments: { prompt: "bad\0prompt" } },
     { name: "grok_ask", arguments: { prompt: "ok", search: "false" } },
-    { name: "grok_search", arguments: { query: "x".repeat(512 * 1024 + 1) } }
+    { name: "grok_search", arguments: { query: "x".repeat(100 * 1024 + 1) } },
+    { name: "grok_search", arguments: { query: "😀".repeat(30 * 1024) } }
   ];
   let calls = 0;
   for (const params of badArguments) {

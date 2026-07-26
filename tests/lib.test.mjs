@@ -20,7 +20,10 @@ import {
   classifyGrokOutput,
   runGrok,
   DEFAULT_GROK_TIMEOUT_MS,
-  DEFAULT_GROK_MAX_OUTPUT_BYTES
+  DEFAULT_GROK_MAX_OUTPUT_BYTES,
+  MAX_GROK_PROMPT_ARG_BYTES,
+  WINDOWS_COMMAND_LINE_MAX_UNITS,
+  windowsCommandLineLength
 } from "../scripts/lib/grok.mjs";
 import { renderResult, truncate } from "../scripts/lib/render.mjs";
 
@@ -213,10 +216,28 @@ test("grok: --reasoning-effort wins when both aliases are supplied", () => {
 
 test("grok: argv validation rejects NUL, oversized values, and invalid turn counts", () => {
   assert.throws(() => buildGrokArgs({ prompt: "bad\0prompt" }), /NUL/);
-  assert.throws(() => buildGrokArgs({ prompt: "x".repeat(1024 * 1024 + 1) }), /limit/);
+  assert.doesNotThrow(() => buildGrokArgs({ prompt: "x".repeat(MAX_GROK_PROMPT_ARG_BYTES) }));
+  assert.throws(
+    () => buildGrokArgs({ prompt: "x".repeat(MAX_GROK_PROMPT_ARG_BYTES + 1) }),
+    /argv limit/
+  );
+  assert.throws(
+    () => buildGrokArgs({ prompt: "😀".repeat(MAX_GROK_PROMPT_ARG_BYTES / 2) }),
+    /argv limit/
+  );
   for (const maxTurns of [0, -1, "1.5", "01", 4_294_967_296]) {
     assert.throws(() => buildGrokArgs({ prompt: "x", maxTurns }), /maxTurns/);
   }
+});
+
+test("grok: Windows command-line accounting rejects an otherwise argv-safe prompt", () => {
+  const prompt = "x".repeat(40 * 1024);
+  assert.throws(
+    () => buildGrokArgs({ prompt }, { platform: "win32", binary: "grok.exe" }),
+    /Windows command-line limit/
+  );
+  const args = buildGrokArgs({ prompt: "short" }, { platform: "win32", binary: "grok.exe" });
+  assert.ok(windowsCommandLineLength("grok.exe", args) + 1 <= WINDOWS_COMMAND_LINE_MAX_UNITS);
 });
 
 test("grok: parseGrokJson tolerates surrounding noise", () => {
@@ -248,6 +269,38 @@ test("grok: classifyGrokOutput surfaces non-zero exit as failure", () => {
   const r = classifyGrokOutput({ stdout: "", stderr: "boom", code: 2 });
   assert.equal(r.ok, false);
   assert.equal(r.error, "boom");
+});
+
+test("grok: captured stdout and stderr redact the exact API key and common token patterns", () => {
+  const previous = process.env.XAI_API_KEY;
+  process.env.XAI_API_KEY = "test-key-that-must-never-render";
+  try {
+    const failed = classifyGrokOutput({
+      stdout: "",
+      stderr:
+        "test-key-that-must-never-render xai-example-secret-value Bearer another.secret/token",
+      code: 2
+    });
+    assert.doesNotMatch(JSON.stringify(failed), /test-key-that-must-never-render/);
+    assert.doesNotMatch(JSON.stringify(failed), /xai-example-secret-value/);
+    assert.doesNotMatch(JSON.stringify(failed), /another\.secret/);
+
+    const succeeded = classifyGrokOutput({
+      stdout: JSON.stringify({
+        text: "test-key-that-must-never-render",
+        thought: "Bearer another.secret/token"
+      }),
+      code: 0
+    });
+    assert.equal(succeeded.text, "***");
+    assert.doesNotMatch(succeeded.thought, /another\.secret/);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.XAI_API_KEY;
+    } else {
+      process.env.XAI_API_KEY = previous;
+    }
+  }
 });
 
 test("grok: classifyGrokOutput reports a parse failure", () => {

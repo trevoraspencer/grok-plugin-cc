@@ -73,7 +73,7 @@ For `ask` and `review`, `--max-turns` overrides the configured `max_turns` for t
 
 An empty diff prints `Nothing to review.` and exits 0. A `--base` ref that doesn't exist — or `--scope branch` when no base can be detected — is reported as an error (exit 1) rather than a misleading "nothing to review". Base values are restricted to bounded branch, tag, remote, SHA-like, or simple `HEAD~N` refs; option-shaped, reflog, range, control-character, and oversized values are rejected. Running the command outside a git repository is likewise an error (exit 1).
 
-Working-tree review includes staged, unstaged, and up to 1,000 untracked paths, enumerated with NUL delimiters so unusual filenames cannot merge records. Untracked files larger than 24 KiB, binary files, symlinks, and files whose identity changes while opening are represented by a skip marker. Git operations have time/output limits, and the final review prompt is capped at 100 Ki UTF-16 code units. Review does not use live search unless `--search` is passed.
+Working-tree review includes staged, unstaged, and up to 1,000 untracked paths, enumerated with NUL delimiters so unusual filenames cannot merge records. Untracked files larger than 24 KiB, binary files, symlinks, and files whose identity changes while opening are represented by a skip marker. Git operations have time/output limits, and review diff content is capped at 96 KiB of UTF-8 so the final prompt remains below the operating system's single-argument limit. Review does not use live search unless `--search` is passed.
 
 ### Background jobs
 
@@ -119,8 +119,8 @@ Legacy or custom IDs (including `grok-build`) are rejected with a migration erro
 
 - **Headless + MCP, not ACP.** ACP casts Grok as the agent expecting an editor client; that's the wrong fit for "Claude Code calls Grok." This plugin uses headless one-shot calls plus an MCP server.
 - **No kept artifacts.** Output renders inline. Background jobs use a transient registry under the OS temp dir — never committed.
-- **Drift-resistant.** All `grok` invocation goes through one choke-point (`scripts/lib/grok.mjs`) with option values bound as indivisible `--name=value` arguments, a two-model allowlist, a hard-coded fallback, defensive JSON parsing, a configurable 15-minute deadline, and a bounded 4 MiB combined output capture. Calls that exceed either bound terminate the complete POSIX process group and report a failure rather than returning truncated JSON. Grok can exit 0 with an empty answer when its web-search worker transiently fails; the wrapper treats that as a failure and retries once.
-- **Auth/key safety.** `XAI_API_KEY` is only ever presence-checked, never printed or logged.
+- **Drift-resistant.** All `grok` invocation goes through one choke-point (`scripts/lib/grok.mjs`) with option values bound as indivisible `--name=value` arguments, a 100 KiB UTF-8 per-prompt argv cap, complete Windows command-line accounting, a two-model allowlist, a hard-coded fallback, defensive JSON parsing, a configurable 15-minute deadline, and a bounded 4 MiB combined output capture. Calls that exceed either runtime bound terminate the complete POSIX process group and report a failure rather than returning truncated JSON. Grok can exit 0 with an empty answer when its web-search worker transiently fails; the wrapper treats that as a failure and retries once.
+- **Auth/key safety.** `XAI_API_KEY` is only ever presence-checked and is redacted from all captured Grok output, errors, rendered results, and persisted background-job output.
 
 ## Development
 

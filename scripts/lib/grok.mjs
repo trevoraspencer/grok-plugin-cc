@@ -9,6 +9,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
 
+// Linux rejects any individual argv entry at 128 KiB (MAX_ARG_STRLEN).
+// Leave enough headroom for the `--single=` prefix and runtime bookkeeping.
+export const MAX_GROK_PROMPT_ARG_BYTES = 100 * 1024;
+export const WINDOWS_COMMAND_LINE_MAX_UNITS = 32_767;
+
 export function grokBinary() {
   const configured = process.env.GROK_BIN;
   return typeof configured === "string" &&
@@ -17,6 +22,50 @@ export function grokBinary() {
     !configured.includes("\0")
     ? configured
     : "grok";
+}
+
+function quotedWindowsArgLength(arg) {
+  if (arg.length > 0 && !/[ \t"]/.test(arg)) {
+    return arg.length;
+  }
+  let length = 2;
+  let backslashes = 0;
+  for (const char of arg) {
+    if (char === "\\") {
+      backslashes += 1;
+    } else if (char === '"') {
+      length += backslashes * 2 + 2;
+      backslashes = 0;
+    } else {
+      length += backslashes + 1;
+      backslashes = 0;
+    }
+  }
+  return length + backslashes * 2;
+}
+
+export function windowsCommandLineLength(command, args) {
+  return args.reduce(
+    (length, arg) => length + 1 + quotedWindowsArgLength(arg),
+    quotedWindowsArgLength(command)
+  );
+}
+
+/**
+ * Remove credentials from every value that can be rendered, persisted, or
+ * returned by the plugin. The exact environment value catches arbitrary key
+ * formats; pattern redaction is defense in depth when the key is not present
+ * in this process's environment.
+ */
+export function redactGrokSecrets(value) {
+  let text = String(value ?? "");
+  const apiKey = process.env.XAI_API_KEY;
+  if (apiKey) {
+    text = text.replaceAll(apiKey, "***");
+  }
+  return text
+    .replace(/\bxai-[A-Za-z0-9._~+/-]{16,}=*/gi, "xai-***")
+    .replace(/\bBearer[ \t]+[A-Za-z0-9._~+/-]+=*/gi, "Bearer ***");
 }
 
 export function buildGrokProbeArgs(command) {
@@ -42,7 +91,7 @@ export function grokVersion() {
   if (result.error || (result.status ?? 1) !== 0) {
     return null;
   }
-  return (result.stdout || result.stderr || "").trim() || null;
+  return redactGrokSecrets(result.stdout || result.stderr || "").trim() || null;
 }
 
 export function grokModelStatus() {
@@ -55,7 +104,7 @@ export function grokModelStatus() {
   if (result.error) {
     return { ok: false, authenticated: false, models: [], error: result.error.message };
   }
-  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+  const output = redactGrokSecrets(`${result.stdout || ""}\n${result.stderr || ""}`);
   const models = [...output.matchAll(/^\s*[-*]\s+([a-z0-9][a-z0-9._-]*)/gim)].map((match) => match[1]);
   const authenticated = !/you are not authenticated|no auth credentials/i.test(output);
   return {
@@ -66,15 +115,10 @@ export function grokModelStatus() {
   };
 }
 
-export function buildGrokArgs({
-  prompt,
-  model,
-  outputFormat = "json",
-  webSearch,
-  effort,
-  reasoningEffort,
-  maxTurns
-} = {}) {
+export function buildGrokArgs(
+  { prompt, model, outputFormat = "json", webSearch, effort, reasoningEffort, maxTurns } = {},
+  { platform = process.platform, binary = grokBinary() } = {}
+) {
   const bind = (name, value, maxLength) => {
     const text = String(value ?? "");
     if (text.includes("\0")) {
@@ -89,7 +133,13 @@ export function buildGrokArgs({
   // Bind every user-controlled option value into its own `--name=value`
   // argument. Clap otherwise treats values such as `--help` as a new option
   // instead of as the value supplied to `-p`/`-m`.
-  const args = [bind("single", prompt, 1024 * 1024)];
+  const promptText = String(prompt ?? "");
+  if (Buffer.byteLength(promptText, "utf8") > MAX_GROK_PROMPT_ARG_BYTES) {
+    throw new TypeError(
+      `prompt exceeds the ${MAX_GROK_PROMPT_ARG_BYTES}-byte safe argv limit`
+    );
+  }
+  const args = [bind("single", promptText, MAX_GROK_PROMPT_ARG_BYTES)];
   args.push(bind("output-format", outputFormat, 32));
   if (model) {
     args.push(bind("model", model, 256));
@@ -124,6 +174,14 @@ export function buildGrokArgs({
       throw new TypeError("maxTurns exceeds Grok CLI's uint32 limit");
     }
     args.push(bind("max-turns", rendered, 10));
+  }
+  if (
+    platform === "win32" &&
+    windowsCommandLineLength(binary, args) + 1 > WINDOWS_COMMAND_LINE_MAX_UNITS
+  ) {
+    throw new TypeError(
+      "Grok invocation exceeds the Windows command-line limit; shorten the prompt"
+    );
   }
   return args;
 }
@@ -194,6 +252,8 @@ function positiveIntegerOr(value, fallback, max = Number.MAX_SAFE_INTEGER) {
 // treat any empty answer as a failure, and flag the transient signature so the
 // caller can retry once.
 export function classifyGrokOutput({ stdout = "", stderr = "", code = 0 } = {}) {
+  stdout = redactGrokSecrets(stdout);
+  stderr = redactGrokSecrets(stderr);
   if (code !== 0) {
     const detail = stderr.trim() || stdout.trim() || `grok exited with code ${code}`;
     return failure({ raw: stdout, stderr, code, error: detail, transient: TRANSIENT_STDERR.test(stderr) });
@@ -372,10 +432,21 @@ function spawnGrok(opts) {
 
     child.on("error", (error) => {
       if (error && error.code === "ENOENT") {
-        settle(failure({ error: `grok CLI not found (tried "${bin}"). ${MISSING_CLI_HINT}` }));
+        settle(
+          failure({
+            error: redactGrokSecrets(
+              `grok CLI not found (tried "${bin}"). ${MISSING_CLI_HINT}`
+            )
+          })
+        );
         return;
       }
-      settle(failure({ error: error ? error.message : "spawn error", stderr: capturedText(stderrChunks) }));
+      settle(
+        failure({
+          error: redactGrokSecrets(error ? error.message : "spawn error"),
+          stderr: redactGrokSecrets(capturedText(stderrChunks))
+        })
+      );
     });
 
     child.on("close", (code) => {
@@ -393,8 +464,8 @@ function spawnGrok(opts) {
           killTimer = null;
         }
       }
-      const stdout = capturedText(stdoutChunks);
-      const stderr = capturedText(stderrChunks);
+      const stdout = redactGrokSecrets(capturedText(stdoutChunks));
+      const stderr = redactGrokSecrets(capturedText(stderrChunks));
       if (termination?.type === "timeout") {
         settle(
           failure({

@@ -7,14 +7,14 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
-import { runGrok } from "./lib/grok.mjs";
+import { MAX_GROK_PROMPT_ARG_BYTES, redactGrokSecrets, runGrok } from "./lib/grok.mjs";
 import { loadConfig, resolveModel, SUPPORTED_MODELS } from "./lib/config.mjs";
 import { renderResult } from "./lib/render.mjs";
 
 const SERVER_INFO = { name: "grok", version: "0.2.0" };
 const DEFAULT_PROTOCOL = "2025-11-25";
 const SUPPORTED_PROTOCOLS = new Set(["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]);
-const MAX_PROMPT_CHARS = 512 * 1024;
+const MAX_PROMPT_CHARS = MAX_GROK_PROMPT_ARG_BYTES;
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_IN_FLIGHT = 8;
 const MAX_ERROR_CHARS = 1000;
@@ -94,7 +94,9 @@ function validRequestId(id) {
 }
 
 function boundedMessage(message) {
-  return String(message ?? "Unknown error").replace(/\0/g, "\uFFFD").slice(0, MAX_ERROR_CHARS);
+  return redactGrokSecrets(message ?? "Unknown error")
+    .replace(/\0/g, "\uFFFD")
+    .slice(0, MAX_ERROR_CHARS);
 }
 
 function jsonrpcResult(id, result) {
@@ -150,6 +152,9 @@ function validatePrompt(value, name) {
   }
   if (value.length > MAX_PROMPT_CHARS) {
     return `${name} exceeds the ${MAX_PROMPT_CHARS}-character limit.`;
+  }
+  if (Buffer.byteLength(value, "utf8") > MAX_GROK_PROMPT_ARG_BYTES) {
+    return `${name} exceeds the ${MAX_GROK_PROMPT_ARG_BYTES}-byte UTF-8 limit.`;
   }
   return null;
 }

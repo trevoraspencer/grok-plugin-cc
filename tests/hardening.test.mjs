@@ -36,6 +36,15 @@ test("hardening: oversized diff is truncated with a note", () => {
   assert.ok(prompt.length < big.length);
 });
 
+test("hardening: multi-byte diffs are truncated against the UTF-8 argv budget", () => {
+  const prompt = buildReviewPrompt({
+    label: "working tree diff",
+    diff: "😀".repeat(100 * 1024)
+  });
+  assert.ok(prompt.includes("truncated"));
+  assert.ok(Buffer.byteLength(prompt, "utf8") < 100 * 1024);
+});
+
 test("hardening: buildGrokArgs tolerates empty/missing prompt without throwing", () => {
   assert.doesNotThrow(() => buildGrokArgs({ prompt: "", model: "m" }));
   assert.doesNotThrow(() => buildGrokArgs({ model: "m" }));
@@ -53,4 +62,25 @@ test("hardening: a non-zero exit surfaces stderr, never a raw stack", () => {
   assert.equal(result.ok, false);
   assert.equal(result.error, "authentication failed");
   assert.ok(!/at Object|node:internal/.test(renderResult(result)));
+});
+
+test("hardening: renderResult redacts credentials even for caller-constructed results", () => {
+  const previous = process.env.XAI_API_KEY;
+  process.env.XAI_API_KEY = "render-secret-value";
+  try {
+    assert.doesNotMatch(
+      renderResult({
+        ok: false,
+        error: "render-secret-value",
+        stderr: "Bearer another.secret/token"
+      }),
+      /render-secret-value|another\.secret/
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.XAI_API_KEY;
+    } else {
+      process.env.XAI_API_KEY = previous;
+    }
+  }
 });

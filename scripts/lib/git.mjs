@@ -8,9 +8,9 @@ import { spawnSync } from "node:child_process";
 
 import { truncate } from "./render.mjs";
 
-// Measured in UTF-16 code units (String.length via truncate), not bytes —
-// multi-byte text can weigh more on the wire, but the cap is self-consistent.
-const MAX_DIFF_CHARS = 100 * 1024;
+// Leave headroom for the review instructions inside the 100 KiB prompt argv
+// boundary enforced by lib/grok.mjs.
+const MAX_DIFF_BYTES = 96 * 1024;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
 const MAX_UNTRACKED_FILES = 1000;
 const MAX_PATH_CHARS = 4096;
@@ -394,16 +394,17 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
     };
   }
   const untrackedParts = [];
-  let untrackedChars = 0;
+  let untrackedBytes = 0;
   let untrackedRenderTruncated = false;
   for (const file of untracked.files) {
     const rendered = renderUntracked(cwd, file, { checkoutRoot });
-    if (untrackedChars + rendered.length > MAX_DIFF_CHARS) {
+    const renderedBytes = Buffer.byteLength(rendered, "utf8");
+    if (untrackedBytes + renderedBytes > MAX_DIFF_BYTES) {
       untrackedRenderTruncated = true;
       break;
     }
     untrackedParts.push(rendered);
-    untrackedChars += rendered.length + 2;
+    untrackedBytes += renderedBytes + 2;
   }
   const untrackedBlock = untrackedParts.join("\n\n");
   const diff = [
@@ -426,9 +427,29 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
 // Compose the read-only review prompt from a resolved diff. Pure + testable.
 export function buildReviewPrompt({ label, diff }) {
   const raw = String(diff ?? "");
-  const body = truncate(raw, MAX_DIFF_CHARS);
+  const rawBytes = Buffer.byteLength(raw, "utf8");
+  let body = raw;
+  if (rawBytes > MAX_DIFF_BYTES) {
+    // Find the longest UTF-16 prefix whose UTF-8 encoding fits the byte budget.
+    // Binary search avoids copying a potentially multi-megabyte diff once per
+    // code point, and the surrogate adjustment keeps the prefix well-formed.
+    let low = 0;
+    let high = raw.length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (Buffer.byteLength(raw.slice(0, middle), "utf8") <= MAX_DIFF_BYTES) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    if (low > 0 && /[\uD800-\uDBFF]/.test(raw[low - 1])) {
+      low -= 1;
+    }
+    body = raw.slice(0, low);
+  }
   const truncatedNote =
-    raw.length > MAX_DIFF_CHARS ? "\n(Note: the diff was truncated to fit the size limit.)" : "";
+    rawBytes > MAX_DIFF_BYTES ? "\n(Note: the diff was truncated to fit the size limit.)" : "";
   return [
     "You are an expert code reviewer acting as an outside model with different priors than the author.",
     `Review the following ${label}. Identify bugs, correctness issues, security problems, and risky changes.`,
