@@ -32,12 +32,44 @@ const HARD_DEFAULTS = Object.freeze({
 const MODEL_KEYS = ["default_model", "search_model", "fallback_model"];
 const SAFETY_MODES = new Set(["permissive", "preview"]);
 const MAX_TIMEOUT_MS = 2_147_483_647;
+const MAX_CONFIG_BYTES = 64 * 1024;
+const MAX_TURNS = 4_294_967_295;
 
 function readJsonSafe(file) {
+  let descriptor;
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    const stat = fs.lstatSync(file, { bigint: true });
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > BigInt(MAX_CONFIG_BYTES)) {
+      return null;
+    }
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (!opened.isFile() || opened.size > BigInt(MAX_CONFIG_BYTES)) {
+      return null;
+    }
+    const buffer = Buffer.alloc(Number(opened.size) + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fs.readSync(descriptor, buffer, offset, buffer.length - offset, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      offset += bytesRead;
+    }
+    if (offset > MAX_CONFIG_BYTES) {
+      return null;
+    }
+    return JSON.parse(buffer.subarray(0, offset).toString("utf8"));
   } catch {
     return null;
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {
+        // A config read is best-effort; ignore close errors.
+      }
+    }
   }
 }
 
@@ -58,7 +90,12 @@ export function normalizeConfig(config, fallback = HARD_DEFAULTS) {
   const source = config && typeof config === "object" && !Array.isArray(config) ? config : {};
 
   for (const key of MODEL_KEYS) {
-    if (typeof source[key] === "string" && source[key].trim()) {
+    if (
+      typeof source[key] === "string" &&
+      source[key].trim() &&
+      source[key].length <= 256 &&
+      !source[key].includes("\0")
+    ) {
       normalized[key] = source[key].trim();
     }
   }
@@ -73,7 +110,11 @@ export function normalizeConfig(config, fallback = HARD_DEFAULTS) {
 
   if (source.max_turns === null) {
     normalized.max_turns = null;
-  } else if (Number.isInteger(source.max_turns) && source.max_turns > 0) {
+  } else if (
+    Number.isInteger(source.max_turns) &&
+    source.max_turns > 0 &&
+    source.max_turns <= MAX_TURNS
+  ) {
     normalized.max_turns = source.max_turns;
   }
 
@@ -109,8 +150,11 @@ export function requireSupportedModel(model, source = "model") {
   if (SUPPORTED_MODEL_SET.has(normalized)) {
     return normalized;
   }
+  const displayed = normalized
+    ? JSON.stringify(normalized.slice(0, 256)) + (normalized.length > 256 ? "…" : "")
+    : '"(empty)"';
   throw new Error(
-    `Unsupported ${source} \"${normalized || "(empty)"}\". Supported models: ${SUPPORTED_MODELS.join(", ")}. ` +
+    `Unsupported ${source} ${displayed}. Supported models: ${SUPPORTED_MODELS.join(", ")}. ` +
       "Legacy model IDs such as grok-build are deprecated by this plugin."
   );
 }
@@ -118,6 +162,8 @@ export function requireSupportedModel(model, source = "model") {
 export function configuredModelIssues(config = {}) {
   return MODEL_KEYS.flatMap((key) => {
     const value = config[key];
-    return value && !isSupportedModel(value) ? [`${key}=${String(value).trim()}`] : [];
+    return value && !isSupportedModel(value)
+      ? [`${key}=${String(value).trim().slice(0, 256)}`]
+      : [];
   });
 }

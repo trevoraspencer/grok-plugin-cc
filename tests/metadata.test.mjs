@@ -75,8 +75,9 @@ test("metadata: README documents offline eval and benchmark development flow", (
 test("metadata: README documents current config, review, and background-job behavior", () => {
   const readme = readText("README.md");
 
-  assert.match(readme, /Overrides are validated per key/);
-  assert.match(readme, /transient JSON record and captured output under the OS temporary directory/);
+  assert.match(readme, /validated per key/);
+  assert.match(readme, /private, atomic records and bounded output/);
+  assert.match(readme, /process-start identities/);
   assert.match(readme, /Untracked files larger than 24 KiB/);
   assert.match(readme, /Review does not use live search unless `--search` is passed/);
 });
@@ -86,7 +87,7 @@ test("metadata: VISION uses the implemented commands layout and two-model routin
 
   assert.ok(vision.includes("├── commands/"));
   assert.ok(vision.includes("Two configurable routes are implemented"));
-  assert.ok(vision.includes("transient JSON record and output file under the OS temporary directory"));
+  assert.ok(vision.includes("private atomic records and bounded output"));
   assert.ok(!vision.includes("├── skills/"));
   assert.ok(!vision.includes("Prompts/templates live in each skill's `SKILL.md`"));
 });
@@ -150,7 +151,9 @@ test("metadata: release checklist preserves safety gates for secrets and live ca
 
   assert.ok(checklist.includes("Confirm no test, eval, or benchmark requires live network access."));
   assert.ok(checklist.includes("Confirm no code path prints `XAI_API_KEY`, auth file contents, or other secret values."));
-  assert.ok(checklist.includes("Confirm every automated Grok call includes `--no-auto-update`."));
+  assert.ok(checklist.includes("Confirm every automated Grok call includes `--no-auto-update`"));
+  assert.ok(checklist.includes("`--no-subagents`"));
+  assert.ok(checklist.includes("denials for Bash, Edit, Read, Grep, and MCP workspace tools"));
   assert.ok(checklist.includes("Confirm `/grok:review` still tells the model not to rewrite code or act on findings."));
 });
 

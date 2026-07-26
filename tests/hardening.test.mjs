@@ -10,7 +10,16 @@ test("hardening: special characters in a prompt pass through as one unescaped ar
   // interpolated or needs escaping — the prompt arrives at grok byte-for-byte.
   const nasty = 'quote " backtick ` dollar $HOME semicolon ; pipe | newline\nrm -rf /';
   const args = buildGrokArgs({ prompt: nasty, model: "grok-4.5" });
-  assert.equal(args[args.indexOf("-p") + 1], nasty);
+  assert.ok(args.includes(`--single=${nasty}`));
+  assert.equal(args.some((arg) => arg === nasty), false);
+});
+
+test("hardening: option-shaped prompts stay bound as values", () => {
+  for (const prompt of ["--help", "--model=attacker", "-p", "--"]) {
+    const args = buildGrokArgs({ prompt, model: "grok-4.5" });
+    assert.equal(args[0], `--single=${prompt}`);
+    assert.equal(args.includes(prompt), false);
+  }
 });
 
 test("hardening: special characters in a diff survive into the review prompt", () => {

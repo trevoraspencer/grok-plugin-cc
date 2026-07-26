@@ -14,15 +14,23 @@ concurrency:
 
 jobs:
   verify:
+    name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22, 24]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22
-          package-manager-cache: false
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
       - run: npm test
       - run: npm run check
-      - run: npm run eval
-      - run: npm run bench
+      - if: matrix.node == 22
+        run: npm run eval
+      - if: matrix.node == 22
+        run: npm run bench

@@ -22,7 +22,11 @@ Use this checklist before tagging or publishing `grok-plugin-cc`. It is scoped t
 - Confirm no command other than future phase-2 write-capable work edits files.
 - Confirm `/grok:review` still tells the model not to rewrite code or act on findings.
 - Confirm `scripts/lib/grok.mjs` is still the only production choke point for live Grok invocation.
-- Confirm every automated Grok call includes `--no-auto-update`.
+- Confirm every automated Grok call includes `--no-auto-update`, `--no-subagents`, `--no-memory`, and denials for Bash, Edit, Read, Grep, and MCP workspace tools.
+- Confirm option values use `--name=value` binding, including prompts that begin with `--`.
+- Confirm background records/output remain private, atomic, bounded, symlink-safe, and process-start-bound.
+- Confirm Git review disables repository fsmonitor/hooks and rejects option/range-shaped base refs.
+- Confirm MCP call notifications do not execute tools and line/concurrency limits remain enforced.
 - Confirm no test, eval, or benchmark requires live network access.
 - Confirm no code path prints `XAI_API_KEY`, auth file contents, or other secret values.
 

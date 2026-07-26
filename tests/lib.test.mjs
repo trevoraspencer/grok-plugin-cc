@@ -15,6 +15,7 @@ import {
 } from "../scripts/lib/config.mjs";
 import {
   buildGrokArgs,
+  buildGrokProbeArgs,
   parseGrokJson,
   classifyGrokOutput,
   runGrok,
@@ -57,7 +58,7 @@ test("args: parses value options, booleans, and positionals", () => {
 });
 
 test("args: -- passes the remainder through as positionals", () => {
-  const { positionals } = parseArgs(["a", "--", "-m", "b"], { valueOptions: ["m"] });
+  const { positionals } = parseArgs(["--", "a", "-m", "b"], { valueOptions: ["m"] });
   assert.deepEqual(positionals, ["a", "-m", "b"]);
 });
 
@@ -97,6 +98,12 @@ test("config: no_auto_update is NOT an advertised knob (--no-auto-update is alwa
   assert.equal("no_auto_update" in loadConfig(), false);
   // and buildGrokArgs always emits it
   assert.ok(buildGrokArgs({ prompt: "x", model: "m" }).includes("--no-auto-update"));
+});
+
+test("grok: setup probes disable unattended CLI updates", () => {
+  assert.deepEqual(buildGrokProbeArgs("--version"), ["--no-auto-update", "--version"]);
+  assert.deepEqual(buildGrokProbeArgs("models"), ["--no-auto-update", "models"]);
+  assert.throws(() => buildGrokProbeArgs("login"), /unsupported/i);
 });
 
 test("config: normalizeConfig keeps well-formed local overrides and drops unknown keys", () => {
@@ -151,18 +158,37 @@ test("config: invalid local overrides fall back to shipped defaults", () => {
   }
 });
 
+test("config: oversized and symlinked local overrides are ignored", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-config-bounds-"));
+  try {
+    const configDir = path.join(dir, ".grok");
+    const override = path.join(configDir, "grok-plugin.json");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(override, JSON.stringify({ web_search: false, padding: "x".repeat(70 * 1024) }));
+    assert.equal(loadConfig({ cwd: dir }).web_search, true);
+
+    fs.unlinkSync(override);
+    const outside = path.join(dir, "outside.json");
+    fs.writeFileSync(outside, JSON.stringify({ web_search: false }));
+    fs.symlinkSync(outside, override);
+    assert.equal(loadConfig({ cwd: dir }).web_search, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("grok: buildGrokArgs yields the basic-ask shape", () => {
   const args = buildGrokArgs({ prompt: "hi", model: "grok-4.5" });
-  assert.ok(args.includes("-p"));
-  assert.ok(args.includes("hi"));
-  assert.ok(args.includes("--output-format"));
-  assert.ok(args.includes("json"));
-  assert.ok(args.includes("-m"));
-  assert.ok(args.includes("grok-4.5"));
+  assert.ok(args.includes("--single=hi"));
+  assert.ok(args.includes("--output-format=json"));
+  assert.ok(args.includes("--model=grok-4.5"));
   assert.ok(args.includes("--no-auto-update"));
+  assert.ok(args.includes("--no-subagents"));
+  assert.ok(args.includes("--no-memory"));
+  for (const tool of ["Bash", "Edit", "Read", "Grep", "MCPTool"]) {
+    assert.ok(args.includes(`--deny=${tool}`));
+  }
   assert.ok(!args.includes("--disable-web-search"));
-  // -p must be immediately followed by the prompt
-  assert.equal(args[args.indexOf("-p") + 1], "hi");
 });
 
 test("grok: buildGrokArgs adds --disable-web-search only when webSearch===false", () => {
@@ -173,17 +199,24 @@ test("grok: buildGrokArgs adds --disable-web-search only when webSearch===false"
 
 test("grok: buildGrokArgs adds optional flags when provided", () => {
   const args = buildGrokArgs({ prompt: "x", model: "m", effort: "high", maxTurns: 3 });
-  assert.ok(args.includes("--reasoning-effort"));
-  assert.ok(!args.includes("--effort"));
-  assert.equal(args[args.indexOf("--reasoning-effort") + 1], "high");
-  assert.ok(args.includes("--max-turns"));
-  assert.equal(args[args.indexOf("--max-turns") + 1], "3");
+  assert.ok(args.includes("--reasoning-effort=high"));
+  assert.ok(!args.some((arg) => arg.startsWith("--effort")));
+  assert.ok(args.includes("--max-turns=3"));
 });
 
 test("grok: --reasoning-effort wins when both aliases are supplied", () => {
   const args = buildGrokArgs({ prompt: "x", model: "m", effort: "low", reasoningEffort: "high" });
-  assert.equal(args.filter((arg) => arg === "--reasoning-effort").length, 1);
-  assert.equal(args[args.indexOf("--reasoning-effort") + 1], "high");
+  assert.deepEqual(args.filter((arg) => arg.startsWith("--reasoning-effort=")), [
+    "--reasoning-effort=high"
+  ]);
+});
+
+test("grok: argv validation rejects NUL, oversized values, and invalid turn counts", () => {
+  assert.throws(() => buildGrokArgs({ prompt: "bad\0prompt" }), /NUL/);
+  assert.throws(() => buildGrokArgs({ prompt: "x".repeat(1024 * 1024 + 1) }), /limit/);
+  for (const maxTurns of [0, -1, "1.5", "01", 4_294_967_296]) {
+    assert.throws(() => buildGrokArgs({ prompt: "x", maxTurns }), /maxTurns/);
+  }
 });
 
 test("grok: parseGrokJson tolerates surrounding noise", () => {
@@ -256,7 +289,9 @@ test("grok: runGrok terminates a timed-out child with actionable guidance", asyn
     const result = await runGrok({
       prompt: "offline timeout fixture",
       retries: 0,
-      timeoutMs: 250,
+      // Leave enough startup headroom for slower/contended CI workers so the
+      // fixture has installed its SIGTERM handler before the timeout fires.
+      timeoutMs: 750,
       onSpawn: (child) => {
         childPid = child.pid;
       }
@@ -265,11 +300,11 @@ test("grok: runGrok terminates a timed-out child with actionable guidance", asyn
     assert.equal(result.ok, false);
     assert.equal(result.attempts, 1);
     assert.equal(result.transient, false);
-    assert.match(result.error, /timed out after 250 ms/i);
+    assert.match(result.error, /timed out after 750 ms/i);
     assert.match(result.error, /timeout_ms/);
     const elapsedMs = Date.now() - startedAt;
-    assert.ok(elapsedMs >= 1000, "timeout fixture should exercise the SIGKILL grace-period fallback");
-    assert.ok(elapsedMs < 3000, "timed-out fixture should be terminated promptly");
+    assert.ok(elapsedMs >= 1500, "timeout fixture should exercise the SIGKILL grace-period fallback");
+    assert.ok(elapsedMs < 4000, "timed-out fixture should be terminated promptly");
     assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH");
   });
 });

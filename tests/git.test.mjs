@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { renderUntracked, resolveDiff } from "../scripts/lib/git.mjs";
+import { isSafeRevision, renderUntracked, resolveDiff } from "../scripts/lib/git.mjs";
 
 function makeRepo(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-git-review-"));
@@ -38,6 +38,64 @@ test("git: working-tree review includes regular untracked files", (t) => {
   assert.equal(review.hasChanges, true);
   assert.match(review.diff, /### notes\.txt/);
   assert.match(review.diff, /ordinary untracked contents/);
+});
+
+test("git: NUL-delimited enumeration handles filenames containing newlines", (t) => {
+  const root = makeRepo(t);
+  fs.writeFileSync(path.join(root, "line\nbreak.txt"), "newline-name-content\n");
+  fs.writeFileSync(path.join(root, "ordinary.txt"), "ordinary-content\n");
+
+  const review = resolveDiff({ scope: "working-tree", cwd: root });
+
+  assert.equal(review.hasChanges, true);
+  assert.match(review.diff, /newline-name-content/);
+  assert.match(review.diff, /ordinary-content/);
+});
+
+test("git: base revisions reject option, range, reflog, and control syntax", (t) => {
+  const root = makeRepo(t);
+  for (const ref of ["--output=/tmp/pwned", "main...HEAD", "main@{1}", "main\n--help", "../main"]) {
+    assert.equal(isSafeRevision(ref), false);
+    const review = resolveDiff({ base: ref, cwd: root });
+    assert.match(review.error, /invalid base ref/i);
+    assert.equal(review.hasChanges, false);
+  }
+  for (const ref of ["main", "origin/main", "HEAD", "HEAD~1", "deadbeef"]) {
+    assert.equal(isSafeRevision(ref), true);
+  }
+});
+
+test("git: untracked enumeration is capped with an explicit notice", (t) => {
+  const root = makeRepo(t);
+  for (let index = 0; index < 1001; index += 1) {
+    fs.writeFileSync(path.join(root, `file-${index.toString().padStart(4, "0")}.txt`), "x\n");
+  }
+  const review = resolveDiff({ scope: "working-tree", cwd: root });
+  assert.equal(review.hasChanges, true);
+  assert.match(review.diff, /Only the first 1000 bounded paths were included/);
+});
+
+test("git: review disables repository-configured fsmonitor hooks", (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX hook fixture");
+    return;
+  }
+  const root = makeRepo(t);
+  const marker = path.join(root, "fsmonitor-ran");
+  const hook = path.join(root, "malicious-fsmonitor");
+  fs.writeFileSync(hook, `#!/bin/sh\n: > '${marker}'\n`);
+  fs.chmodSync(hook, 0o755);
+  const configured = spawnSync("git", ["config", "core.fsmonitor", hook], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(configured.status, 0, configured.stderr);
+  fs.writeFileSync(path.join(root, "ordinary.txt"), "review me\n");
+
+  const review = resolveDiff({ scope: "working-tree", cwd: root });
+
+  assert.equal(review.hasChanges, true);
+  assert.equal(fs.existsSync(marker), false);
 });
 
 test("git: working-tree review never reads an untracked symlink target", (t) => {

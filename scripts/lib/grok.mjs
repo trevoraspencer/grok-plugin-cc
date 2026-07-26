@@ -10,7 +10,22 @@ import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
 
 export function grokBinary() {
-  return process.env.GROK_BIN || "grok";
+  const configured = process.env.GROK_BIN;
+  return typeof configured === "string" &&
+    configured.length > 0 &&
+    configured.length <= 4096 &&
+    !configured.includes("\0")
+    ? configured
+    : "grok";
+}
+
+export function buildGrokProbeArgs(command) {
+  if (command !== "--version" && command !== "models") {
+    throw new TypeError(`Unsupported Grok probe: ${command}`);
+  }
+  // Even read-only setup probes must not let an unattended invocation update
+  // the installed CLI as a side effect.
+  return ["--no-auto-update", command];
 }
 
 // Probe the installed grok version (honors GROK_BIN). Returns the version
@@ -18,7 +33,12 @@ export function grokBinary() {
 // besides runGrok that touches the grok binary — kept here so all grok
 // invocation lives behind this one module.
 export function grokVersion() {
-  const result = spawnSync(grokBinary(), ["--version"], { encoding: "utf8", windowsHide: true });
+  const result = spawnSync(grokBinary(), buildGrokProbeArgs("--version"), {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 5000,
+    maxBuffer: 1024 * 1024
+  });
   if (result.error || (result.status ?? 1) !== 0) {
     return null;
   }
@@ -26,7 +46,7 @@ export function grokVersion() {
 }
 
 export function grokModelStatus() {
-  const result = spawnSync(grokBinary(), ["models"], {
+  const result = spawnSync(grokBinary(), buildGrokProbeArgs("models"), {
     encoding: "utf8",
     windowsHide: true,
     timeout: 15_000,
@@ -53,27 +73,57 @@ export function buildGrokArgs({
   webSearch,
   effort,
   reasoningEffort,
-  maxTurns,
-  extra = []
+  maxTurns
 } = {}) {
-  const args = ["-p", String(prompt ?? "")];
-  args.push("--output-format", outputFormat);
+  const bind = (name, value, maxLength) => {
+    const text = String(value ?? "");
+    if (text.includes("\0")) {
+      throw new TypeError(`${name} must not contain NUL characters`);
+    }
+    if (text.length > maxLength) {
+      throw new TypeError(`${name} exceeds the ${maxLength}-character limit`);
+    }
+    return `--${name}=${text}`;
+  };
+
+  // Bind every user-controlled option value into its own `--name=value`
+  // argument. Clap otherwise treats values such as `--help` as a new option
+  // instead of as the value supplied to `-p`/`-m`.
+  const args = [bind("single", prompt, 1024 * 1024)];
+  args.push(bind("output-format", outputFormat, 32));
   if (model) {
-    args.push("-m", String(model));
+    args.push(bind("model", model, 256));
   }
-  args.push("--no-auto-update");
+  args.push(
+    "--no-auto-update",
+    // Every command in this plugin is advertised as read-only. Enforce that
+    // at the CLI boundary rather than relying on a prompt instruction:
+    // disallow shells, edits, workspace MCP tools, subagents, and memory.
+    "--no-subagents",
+    "--no-memory",
+    "--deny=Bash",
+    "--deny=Edit",
+    "--deny=Read",
+    "--deny=Grep",
+    "--deny=MCPTool"
+  );
   if (webSearch === false) {
     args.push("--disable-web-search");
   }
   const resolvedEffort = reasoningEffort ?? effort;
   if (resolvedEffort !== undefined && resolvedEffort !== null && resolvedEffort !== "") {
-    args.push("--reasoning-effort", String(resolvedEffort));
+    args.push(bind("reasoning-effort", resolvedEffort, 64));
   }
   if (maxTurns !== undefined && maxTurns !== null && maxTurns !== "") {
-    args.push("--max-turns", String(maxTurns));
-  }
-  if (Array.isArray(extra) && extra.length) {
-    args.push(...extra);
+    const rendered = String(maxTurns);
+    if (!/^[1-9]\d*$/.test(rendered)) {
+      throw new TypeError("maxTurns must be a positive base-10 integer");
+    }
+    const numeric = Number(rendered);
+    if (!Number.isSafeInteger(numeric) || numeric > 4_294_967_295) {
+      throw new TypeError("maxTurns exceeds Grok CLI's uint32 limit");
+    }
+    args.push(bind("max-turns", rendered, 10));
   }
   return args;
 }
@@ -130,6 +180,7 @@ const TRANSIENT_STDERR = /Auth\(|Authorization|Transport channel closed|temporar
 // is terminated instead of retaining or returning a truncated payload.
 export const DEFAULT_GROK_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_GROK_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const MAX_GROK_OUTPUT_BYTES = 64 * 1024 * 1024;
 const TERMINATION_GRACE_MS = 1000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
@@ -201,15 +252,35 @@ export function classifyGrokOutput({ stdout = "", stderr = "", code = 0 } = {}) 
 }
 
 function spawnGrok(opts) {
-  const args = buildGrokArgs(opts);
+  let args;
+  try {
+    args = buildGrokArgs(opts);
+  } catch (error) {
+    return Promise.resolve(
+      failure({
+        error: `Invalid Grok invocation: ${error instanceof Error ? error.message : String(error)}`
+      })
+    );
+  }
   const bin = grokBinary();
   const timeoutMs = positiveIntegerOr(opts.timeoutMs, DEFAULT_GROK_TIMEOUT_MS, MAX_TIMER_DELAY_MS);
-  const maxOutputBytes = positiveIntegerOr(opts.maxOutputBytes, DEFAULT_GROK_MAX_OUTPUT_BYTES);
+  const maxOutputBytes = positiveIntegerOr(
+    opts.maxOutputBytes,
+    DEFAULT_GROK_MAX_OUTPUT_BYTES,
+    MAX_GROK_OUTPUT_BYTES
+  );
 
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(bin, args, { env: process.env, windowsHide: true });
+      child = spawn(bin, args, {
+        env: process.env,
+        windowsHide: true,
+        // Put Grok and every tool it spawns in an isolated process group on
+        // POSIX so timeouts, output limits, and background cancellation can
+        // terminate the whole tree instead of orphaning quota-consuming work.
+        detached: process.platform !== "win32"
+      });
     } catch (error) {
       resolve(failure({ error: `Failed to launch grok ("${bin}"): ${error.message}` }));
       return;
@@ -232,35 +303,46 @@ function spawnGrok(opts) {
     let termination = null;
     let timeoutTimer = null;
     let killTimer = null;
-    let closed = false;
     let settled = false;
 
-    const clearTimers = () => {
+    const clearTimers = (preserveKillTimer = false) => {
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (killTimer) clearTimeout(killTimer);
+      if (killTimer && !preserveKillTimer) clearTimeout(killTimer);
     };
 
     const capturedText = (chunks) => Buffer.concat(chunks).toString("utf8");
 
-    const settle = (value) => {
+    const settle = (value, preserveKillTimer = false) => {
       if (settled) return;
       settled = true;
-      clearTimers();
+      clearTimers(preserveKillTimer);
       resolve(value);
+    };
+
+    const signalChildTree = (signalName) => {
+      if (process.platform !== "win32" && Number.isInteger(child.pid)) {
+        try {
+          process.kill(-child.pid, signalName);
+          return;
+        } catch {
+          // The process group may have disappeared between the boundary event
+          // and this signal. Fall back to the direct child.
+        }
+      }
+      child.kill(signalName);
     };
 
     const terminate = (reason) => {
       if (termination) return;
       termination = reason;
       try {
-        child.kill("SIGTERM");
+        signalChildTree("SIGTERM");
       } catch {
         // The close/error handlers below still produce the bounded failure.
       }
       killTimer = setTimeout(() => {
-        if (closed) return;
         try {
-          child.kill("SIGKILL");
+          signalChildTree("SIGKILL");
         } catch {
           // If the process exited between the close check and kill, close will
           // still settle the promise. SIGKILL is only the timeout fallback.
@@ -297,7 +379,20 @@ function spawnGrok(opts) {
     });
 
     child.on("close", (code) => {
-      closed = true;
+      let keepGroupEscalation = false;
+      if (killTimer && termination && process.platform !== "win32" && Number.isInteger(child.pid)) {
+        try {
+          // The direct child can close while a descendant with detached stdio
+          // remains in the process group. Keep SIGKILL escalation armed until
+          // the entire group disappears.
+          process.kill(-child.pid, 0);
+          keepGroupEscalation = true;
+          killTimer.ref?.();
+        } catch {
+          clearTimeout(killTimer);
+          killTimer = null;
+        }
+      }
       const stdout = capturedText(stdoutChunks);
       const stderr = capturedText(stderrChunks);
       if (termination?.type === "timeout") {
@@ -307,7 +402,8 @@ function spawnGrok(opts) {
             error:
               `Grok call timed out after ${timeoutMs} ms and was terminated. ` +
               "Increase `timeout_ms` in .grok/grok-plugin.json for a legitimately longer workload, or retry the call."
-          })
+          }),
+          keepGroupEscalation
         );
         return;
       }
@@ -318,11 +414,12 @@ function spawnGrok(opts) {
             error:
               `Grok output exceeded the ${maxOutputBytes}-byte combined capture limit and was terminated. ` +
               "Reduce the requested output or max turns, then retry the call."
-          })
+          }),
+          keepGroupEscalation
         );
         return;
       }
-      settle(classifyGrokOutput({ stdout, stderr, code: code ?? 0 }));
+      settle(classifyGrokOutput({ stdout, stderr, code: code ?? 0 }), keepGroupEscalation);
     });
 
     timeoutTimer = setTimeout(() => terminate({ type: "timeout" }), timeoutMs);
@@ -334,7 +431,8 @@ function spawnGrok(opts) {
 // `retries` is bounded (default 1) — this never loops indefinitely.
 // Pass `onSpawn(child)` to observe each spawned child process (re-invoked on retry).
 export async function runGrok(opts = {}) {
-  const retries = Number.isInteger(opts.retries) ? opts.retries : 1;
+  const retries =
+    Number.isInteger(opts.retries) && opts.retries >= 0 && opts.retries <= 3 ? opts.retries : 1;
   let result = await spawnGrok(opts);
   let attempts = 1;
   while (!result.ok && result.transient && attempts <= retries) {

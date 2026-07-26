@@ -100,15 +100,19 @@ export function dryRunCases() {
         return {
           ok:
             includesAll(parsed.value, [
-              "-p",
-              "What is 2+2?",
-              "--output-format",
-              "json",
-              "-m",
-              "grok-composer-2.5-fast",
+              "--single=What is 2+2?",
+              "--output-format=json",
+              "--model=grok-composer-2.5-fast",
               "--no-auto-update",
+              "--no-subagents",
+              "--no-memory",
+              "--deny=Bash",
+              "--deny=Edit",
+              "--deny=Read",
+              "--deny=Grep",
+              "--deny=MCPTool",
               "--disable-web-search"
-            ]) && parsed.value[1] === "What is 2+2?",
+            ]) && parsed.value[0] === "--single=What is 2+2?",
           value: parsed.value
         };
       }
@@ -122,7 +126,19 @@ export function dryRunCases() {
         if (!Array.isArray(parsed.value)) return { ok: false, error: "expected a JSON argv array" };
         return {
           ok:
-            includesAll(parsed.value, ["-p", "--output-format", "json", "--no-auto-update", "--disable-web-search"]) &&
+            includesAll(parsed.value, [
+              "--output-format=json",
+              "--no-auto-update",
+              "--no-subagents",
+              "--no-memory",
+              "--deny=Bash",
+              "--deny=Edit",
+              "--deny=Read",
+              "--deny=Grep",
+              "--deny=MCPTool",
+              "--disable-web-search"
+            ]) &&
+            parsed.value.some((part) => String(part).startsWith("--single=")) &&
             parsed.value.some((part) => String(part).includes("Do NOT rewrite")),
           value: parsed.value
         };
@@ -226,7 +242,7 @@ function mcpSmoke() {
     });
 
     child.stdin.write(
-      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } })}\n`
+      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } })}\n`
     );
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
     child.stdin.end();
@@ -282,6 +298,19 @@ function metadataChecks() {
     boolCheck("mcp_tools_exported", "MCP server exports grok_search and grok_ask", includesAll(mcpServer, ["grok_search", "grok_ask"])),
     boolCheck("defaults_models", "defaults expose only Grok 4.5 and Composer 2.5 Fast", includesAll(JSON.stringify(defaults), ["grok-4.5", "grok-composer-2.5-fast", "fallback_model"]) && !JSON.stringify(defaults).includes('"grok-build"')),
     boolCheck("no_auto_update", "grok calls always include --no-auto-update", grokLib.includes("--no-auto-update")),
+    boolCheck(
+      "read_only_boundary",
+      "grok calls disable subagents, memory, and workspace tools",
+      includesAll(grokLib, [
+        "--no-subagents",
+        "--no-memory",
+        "--deny=Bash",
+        "--deny=Edit",
+        "--deny=Read",
+        "--deny=Grep",
+        "--deny=MCPTool"
+      ])
+    ),
     boolCheck("transient_retry", "grok wrapper retries transient empty answers", includesAll(grokLib, ["transient", "attempts", "retries"])),
     boolCheck("readme_unofficial", "README carries unofficial disclaimer", /Unofficial/i.test(readme)),
     boolCheck("readme_install", "README documents install flow", includesAll(readme, ["/plugin marketplace add", "/plugin install"])),
@@ -346,6 +375,7 @@ async function main() {
     "mcp_tools_exported",
     "defaults_models",
     "no_auto_update",
+    "read_only_boundary",
     "transient_retry",
     "vision_phase2"
   ]);

@@ -94,7 +94,18 @@ test("commands: ask documents every implemented execution and rendering flag", (
 
 test("commands: review documents every implemented review and rendering flag", () => {
   const text = commandText("review");
-  const flags = ["--model", "--base", "--scope", "--search", "--thought", "--background", "--print-args"];
+  const flags = [
+    "--model",
+    "--base",
+    "--scope",
+    "--search",
+    "--max-turns",
+    "--effort",
+    "--reasoning-effort",
+    "--thought",
+    "--background",
+    "--print-args"
+  ];
   for (const flag of flags) {
     assert.ok(text.includes(flag), `review should document ${flag}`);
   }

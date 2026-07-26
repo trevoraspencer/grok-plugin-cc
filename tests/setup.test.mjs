@@ -15,10 +15,13 @@ const CONFIG = {
 };
 
 const DISPATCHER = fileURLToPath(new URL("../scripts/grok.mjs", import.meta.url));
+const GROK_PROCESS_FIXTURE = fileURLToPath(
+  new URL("./fixtures/grok-process-fixture.mjs", import.meta.url)
+);
 
 test("setup: OK when grok present + auth present + node ok", () => {
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.93",
+    grokVersion: "grok 0.2.111",
     hasAuth: true,
     modelStatus: { ok: true, authenticated: true, models: ["grok-4.5", "grok-composer-2.5-fast"] },
     config: CONFIG,
@@ -48,7 +51,7 @@ test("setup: CLI missing → fail status + curl install guidance (never npm) + n
 
 test("setup: auth missing → auth-needed step and non-OK", () => {
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.93",
+    grokVersion: "grok 0.2.111",
     hasAuth: false,
     config: CONFIG,
     nodeVersion: "v22.22.3"
@@ -61,7 +64,7 @@ test("setup: auth missing → auth-needed step and non-OK", () => {
 
 test("setup: old Node → warn + upgrade step", () => {
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.93",
+    grokVersion: "grok 0.2.111",
     hasAuth: true,
     config: CONFIG,
     nodeVersion: "v16.0.0"
@@ -72,7 +75,7 @@ test("setup: old Node → warn + upgrade step", () => {
 
 test("setup: report is JSON-serializable with the documented shape", () => {
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.93",
+    grokVersion: "grok 0.2.111",
     hasAuth: true,
     config: CONFIG,
     nodeVersion: "v22.22.3"
@@ -86,7 +89,7 @@ test("setup: report is JSON-serializable with the documented shape", () => {
 
 test("setup: stale auth files do not count when grok models reports unauthenticated", () => {
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.93",
+    grokVersion: "grok 0.2.111",
     hasAuth: false,
     modelStatus: { ok: true, authenticated: false, models: ["grok-4.5", "grok-composer-2.5-fast"] },
     config: CONFIG,
@@ -100,7 +103,7 @@ test("setup: stale auth files do not count when grok models reports unauthentica
 test("setup: unsupported or missing catalog models fail the model check", () => {
   const badConfig = { ...CONFIG, default_model: "grok-build" };
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.93",
+    grokVersion: "grok 0.2.111",
     hasAuth: true,
     modelStatus: { ok: true, authenticated: true, models: ["grok-4.5"] },
     config: badConfig,
@@ -114,7 +117,7 @@ test("setup: unsupported or missing catalog models fail the model check", () => 
 
 test("setup: Grok Build versions before the current compatibility floor warn", () => {
   const report = buildSetupReport({
-    grokVersion: "grok 0.2.92",
+    grokVersion: "grok 0.2.110",
     hasAuth: true,
     config: CONFIG,
     nodeVersion: "v22.22.3"
@@ -132,10 +135,10 @@ test("setup: renderSetupReport produces readable markdown without throwing on a 
   assert.ok(md.includes("Next steps:"));
 });
 
-test("setup: offline schema smoke exits zero without an installed Grok CLI", () => {
+test("setup: offline schema smoke never executes even an available Grok binary", () => {
   const result = spawnSync(process.execPath, [DISPATCHER, "setup", "--json --offline"], {
     encoding: "utf8",
-    env: { ...process.env, GROK_BIN: "definitely-not-an-installed-grok-binary" }
+    env: { ...process.env, GROK_BIN: GROK_PROCESS_FIXTURE }
   });
   assert.equal(result.status, 0);
   const report = JSON.parse(result.stdout);
