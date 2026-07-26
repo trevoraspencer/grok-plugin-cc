@@ -24,6 +24,9 @@ export function parseArgs(argv, config = {}) {
 
     if (!token.startsWith("-") || token === "-") {
       positionals.push(token);
+      // Options belong before the free-form prompt. Once prompt text starts,
+      // every later token is data (for example a question about "--model").
+      passthrough = true;
       continue;
     }
 
@@ -32,7 +35,10 @@ export function parseArgs(argv, config = {}) {
       const key = aliasMap[rawKey] ?? rawKey;
 
       if (booleanOptions.has(key)) {
-        options[key] = inlineValue === undefined ? true : inlineValue !== "false";
+        if (inlineValue !== undefined && inlineValue !== "true" && inlineValue !== "false") {
+          throw new Error(`--${rawKey} must be true or false when given an inline value`);
+        }
+        options[key] = inlineValue === undefined ? true : inlineValue === "true";
         continue;
       }
 
@@ -49,6 +55,7 @@ export function parseArgs(argv, config = {}) {
       }
 
       positionals.push(token);
+      passthrough = true;
       continue;
     }
 
@@ -71,6 +78,7 @@ export function parseArgs(argv, config = {}) {
     }
 
     positionals.push(token);
+    passthrough = true;
   }
 
   return { options, positionals };

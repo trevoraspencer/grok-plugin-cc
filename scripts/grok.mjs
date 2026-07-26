@@ -6,8 +6,9 @@
 // Subcommands: ask, review, status, result, cancel, setup. All grok invocation
 // goes through lib/grok.mjs.
 
+import fs from "node:fs";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { parseArgs } from "./lib/args.mjs";
 import { loadConfig, resolveModel } from "./lib/config.mjs";
@@ -55,6 +56,75 @@ export function resolveWebSearch(options, config) {
   return config.web_search !== false;
 }
 
+const SUBCOMMAND_OPTIONS = {
+  ask: new Set([
+    "model",
+    "no-search",
+    "search",
+    "max-turns",
+    "effort",
+    "reasoning-effort",
+    "thought",
+    "background",
+    "print-args"
+  ]),
+  review: new Set([
+    "model",
+    "base",
+    "scope",
+    "search",
+    "max-turns",
+    "effort",
+    "reasoning-effort",
+    "thought",
+    "background",
+    "print-args"
+  ]),
+  status: new Set(),
+  result: new Set(),
+  cancel: new Set(),
+  setup: new Set(["json", "offline"])
+};
+
+export function validateInvocation(parsed, subcommand = "ask") {
+  const { options } = parsed;
+  const allowed = SUBCOMMAND_OPTIONS[subcommand];
+  if (allowed) {
+    const unsupported = Object.keys(options).filter((key) => !allowed.has(key));
+    if (unsupported.length > 0) {
+      throw new Error(`Unsupported option for ${subcommand}: --${unsupported[0]}`);
+    }
+  }
+  if (["review", "setup"].includes(subcommand) && parsed.positionals.length > 0) {
+    throw new Error(`${subcommand} does not accept positional arguments.`);
+  }
+  if (subcommand === "status" && parsed.positionals.length > 1) {
+    throw new Error("status accepts at most one job ID.");
+  }
+  if (["result", "cancel"].includes(subcommand) && parsed.positionals.length > 1) {
+    throw new Error(`${subcommand} accepts exactly one job ID.`);
+  }
+  if (options.search && options["no-search"]) {
+    throw new Error("Use only one of --search or --no-search.");
+  }
+  if (options.effort !== undefined && options["reasoning-effort"] !== undefined) {
+    throw new Error("Use only one of --effort or --reasoning-effort.");
+  }
+  for (const key of ["effort", "reasoning-effort"]) {
+    const value = options[key];
+    if (value !== undefined && (String(value).includes("\0") || String(value).length > 64)) {
+      throw new Error(`--${key} must be a NUL-free value of at most 64 characters.`);
+    }
+  }
+  if (options["max-turns"] !== undefined) {
+    const rendered = String(options["max-turns"]);
+    if (!/^[1-9]\d*$/.test(rendered) || Number(rendered) > 4_294_967_295) {
+      throw new Error("--max-turns must be an integer from 1 through 4294967295.");
+    }
+  }
+  return parsed;
+}
+
 function out(text) {
   process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
 }
@@ -68,18 +138,53 @@ function err(text) {
 // the grok call, write the rendered output to the job's out file, then mark it
 // done/failed. The job id is printed first so the launching turn can report it.
 async function runBackground({ kind, callOpts, showThought }) {
-  const job = createJob({ kind });
+  let job;
+  try {
+    job = createJob({ kind });
+  } catch (error) {
+    err(`Could not create a secure background job: ${error.message}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!markRunning(job.id, process.pid)) {
+    markFailed(job.id, "could not bind the background wrapper process");
+    err(`Could not securely bind background job ${job.id} to its wrapper process.`);
+    process.exitCode = 1;
+    return;
+  }
   out(`Started background ${kind} job: ${job.id}`);
   out(`Check progress with: /grok:status ${job.id}`);
-  markRunning(job.id, process.pid);
   try {
+    let childBindingError = null;
     // Record each spawned grok child's pid so /grok:cancel can terminate the
     // real work process too, not just this wrapper (which would orphan it).
     const result = await runGrok({
       ...callOpts,
-      onSpawn: (child) => recordChildPid(job.id, child.pid)
+      onSpawn: (child) => {
+        if (recordChildPid(job.id, child.pid)) {
+          return;
+        }
+        childBindingError = "could not bind the Grok child process to the background job";
+        try {
+          if (process.platform !== "win32" && Number.isInteger(child.pid)) {
+            process.kill(-child.pid, "SIGTERM");
+          } else {
+            child.kill("SIGTERM");
+          }
+        } catch {
+          // The child may already have exited; the failure is recorded below.
+        }
+      }
     });
-    writeOutput(job.id, renderResult(result, { showThought }));
+    if (childBindingError) {
+      writeOutput(job.id, `> ⚠ **Grok error**\n\n${childBindingError}\n`);
+      markFailed(job.id, childBindingError);
+      return;
+    }
+    if (!writeOutput(job.id, renderResult(result, { showThought }))) {
+      markFailed(job.id, "could not persist bounded job output");
+      return;
+    }
     if (result.ok) {
       markDone(job.id, (result.text || "").trim().split("\n")[0] || "done");
     } else {
@@ -151,6 +256,9 @@ async function cmdReview(parsed, config) {
     model: resolveModel({ explicit: parsed.options.model, kind: "default", config }),
     // A code review is focused on the diff; web search is off unless asked for.
     webSearch: Boolean(parsed.options.search),
+    effort: parsed.options.effort,
+    reasoningEffort: parsed.options["reasoning-effort"],
+    maxTurns: parsed.options["max-turns"] ?? config.max_turns ?? undefined,
     timeoutMs: config.timeout_ms ?? undefined
   };
 
@@ -253,7 +361,7 @@ const USAGE = `grok dispatcher — subcommands:
 
 async function main() {
   const subcommand = process.argv[2];
-  const parsed = parseInvocation(process.argv.slice(3));
+  const parsed = validateInvocation(parseInvocation(process.argv.slice(3)), subcommand);
   const config = loadConfig();
 
   switch (subcommand) {
@@ -277,8 +385,15 @@ async function main() {
   }
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+let invokedDirectly = false;
+if (process.argv[1]) {
+  try {
+    invokedDirectly =
+      fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    invokedDirectly = false;
+  }
+}
 
 if (invokedDirectly) {
   main().catch((error) => {

@@ -13,7 +13,7 @@ import { configuredModelIssues, SUPPORTED_MODELS } from "./config.mjs";
 import { grokModelStatus, grokVersion } from "./grok.mjs";
 
 const NODE_FLOOR = 18;
-const MIN_GROK_VERSION = [0, 2, 93];
+const MIN_GROK_VERSION = [0, 2, 111];
 
 function parseGrokVersion(value) {
   const match = String(value ?? "").match(/\b(\d+)\.(\d+)\.(\d+)\b/);
@@ -43,7 +43,9 @@ export function detectAuth() {
 export function gatherSetupInputs(config, { offline = false } = {}) {
   const modelStatus = offline ? null : grokModelStatus();
   return {
-    grokVersion: grokVersion(),
+    // Offline mode is the hermetic CI/eval schema smoke: do not execute even
+    // a locally installed or user-supplied GROK_BIN.
+    grokVersion: offline ? null : grokVersion(),
     hasAuth: modelStatus?.ok ? modelStatus.authenticated : detectAuth(),
     modelStatus,
     config,
@@ -105,7 +107,11 @@ export function buildSetupReport({
     },
     { name: "safety", status: "ok", detail: String(config.safety ?? "permissive") },
     { name: "web search default", status: "ok", detail: config.web_search === false ? "off" : "on" },
-    { name: "automation", status: "ok", detail: "headless calls always pass --no-auto-update" }
+    {
+      name: "automation",
+      status: "ok",
+      detail: "headless calls disable auto-update, subagents, memory, and workspace tools"
+    }
   ];
 
   const nextSteps = [];

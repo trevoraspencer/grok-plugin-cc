@@ -8,25 +8,67 @@ import { spawnSync } from "node:child_process";
 
 import { truncate } from "./render.mjs";
 
-// Measured in UTF-16 code units (String.length via truncate), not bytes —
-// multi-byte text can weigh more on the wire, but the cap is self-consistent.
-const MAX_DIFF_CHARS = 100 * 1024;
+// Leave headroom for the review instructions inside the 100 KiB prompt argv
+// boundary enforced by lib/grok.mjs.
+const MAX_DIFF_BYTES = 96 * 1024;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
+const MAX_UNTRACKED_FILES = 1000;
+const MAX_PATH_CHARS = 4096;
+const GIT_TIMEOUT_MS = 15_000;
+const GIT_MAX_BUFFER = 8 * 1024 * 1024;
 const BIGINT_STATS = { bigint: true };
 
 function git(args, cwd = process.cwd()) {
-  const result = spawnSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    windowsHide: true
-  });
+  const noHooks = process.platform === "win32" ? "NUL" : "/dev/null";
+  const result = spawnSync(
+    "git",
+    [
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      `core.hooksPath=${noHooks}`,
+      "-c",
+      "submodule.recurse=false",
+      ...args
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
+      windowsHide: true
+    }
+  );
   return {
     status: result.status ?? (result.error ? 1 : 0),
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
     error: result.error ?? null
   };
+}
+
+function gitFailure(result, operation) {
+  const detail = (result.stderr || result.error?.message || "").trim();
+  return `${operation} failed${detail ? `: ${truncate(detail, 500)}` : "."}`;
+}
+
+// Review refs are data, never options or arbitrary revision expressions.
+// Support ordinary branches, tags, remote refs, SHA-like values, and HEAD~N,
+// while rejecting option-shaped and range/reflog syntax.
+export function isSafeRevision(ref) {
+  return (
+    typeof ref === "string" &&
+    ref.length > 0 &&
+    ref.length <= 256 &&
+    /^[A-Za-z0-9][A-Za-z0-9._/@+~/-]*$/.test(ref) &&
+    !ref.startsWith("-") &&
+    !ref.includes("..") &&
+    !ref.includes("@{") &&
+    !ref.includes("//") &&
+    !ref.endsWith("/") &&
+    !ref.endsWith(".") &&
+    !ref.endsWith(".lock")
+  );
 }
 
 export function isGitRepo(cwd = process.cwd()) {
@@ -48,14 +90,20 @@ export function workingTreeDiff(cwd = process.cwd()) {
 }
 
 export function branchDiff(base, cwd = process.cwd()) {
-  return git(["diff", "--no-ext-diff", `${base}...HEAD`], cwd).stdout;
+  if (!isSafeRevision(base)) {
+    return "";
+  }
+  return git(["diff", "--no-ext-diff", "--no-textconv", `${base}...HEAD`, "--"], cwd).stdout;
 }
 
 // Whether a ref resolves to a commit. Used to reject a typo'd --base before
 // branchDiff (whose empty stdout on a bad ref would otherwise read as "no
 // changes" and hide a whole branch).
 export function refExists(ref, cwd = process.cwd()) {
-  return git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], cwd).status === 0;
+  return (
+    isSafeRevision(ref) &&
+    git(["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], cwd).status === 0
+  );
 }
 
 export function detectDefaultBranch(cwd = process.cwd()) {
@@ -75,10 +123,17 @@ export function detectDefaultBranch(cwd = process.cwd()) {
 }
 
 function listUntracked(cwd) {
-  return git(["ls-files", "--others", "--exclude-standard"], cwd)
-    .stdout.trim()
-    .split("\n")
-    .filter(Boolean);
+  const result = git(["ls-files", "-z", "--others", "--exclude-standard"], cwd);
+  if (result.status !== 0) {
+    return { files: [], truncated: false, error: gitFailure(result, "Listing untracked files") };
+  }
+  const all = result.stdout.split("\0").filter(Boolean);
+  const files = all.filter((file) => file.length <= MAX_PATH_CHARS).slice(0, MAX_UNTRACKED_FILES);
+  return {
+    files,
+    truncated: all.length > files.length,
+    error: null
+  };
 }
 
 function pathIsWithin(root, candidate) {
@@ -227,6 +282,16 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
   }
 
   const target = selectReviewTarget({ scope, base });
+  const statusResult = git(["status", "--short", "--untracked-files=all"], cwd);
+  if (statusResult.status !== 0) {
+    return {
+      label: "working tree",
+      diff: "",
+      hasChanges: false,
+      error: gitFailure(statusResult, "Reading Git status")
+    };
+  }
+  const status = statusResult.stdout.trim();
 
   // Resolve `auto`: review the working tree when it is dirty; otherwise fall
   // back to a branch diff against the detected default base, so a clean-but-
@@ -234,7 +299,7 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
   let mode = target.mode;
   let ref = target.base;
   if (mode === "auto") {
-    if (statusShort(cwd).length > 0) {
+    if (status.length > 0) {
       mode = "working-tree";
     } else {
       const detected = detectDefaultBranch(cwd);
@@ -259,6 +324,15 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
         error: "Could not detect a base branch to diff against. Pass --base <ref>."
       };
     }
+    if (!isSafeRevision(branchRef)) {
+      return {
+        label: "branch diff",
+        diff: "",
+        hasChanges: false,
+        error:
+          "Invalid base ref. Use a branch, tag, remote ref, commit SHA, or simple HEAD~N expression; option/range syntax is not accepted."
+      };
+    }
     if (!refExists(branchRef, cwd)) {
       // A typo'd / nonexistent base would make git exit non-zero with empty
       // stdout, which would otherwise read as "nothing to review".
@@ -269,7 +343,19 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
         error: `Base ref "${branchRef}" not found. Pass a valid --base <ref>.`
       };
     }
-    const diff = branchDiff(branchRef, cwd);
+    const result = git(
+      ["diff", "--no-ext-diff", "--no-textconv", `${branchRef}...HEAD`, "--"],
+      cwd
+    );
+    if (result.status !== 0) {
+      return {
+        label: `branch diff against ${branchRef}`,
+        diff: "",
+        hasChanges: false,
+        error: gitFailure(result, `Diff against "${branchRef}"`)
+      };
+    }
+    const diff = result.stdout;
     return {
       label: `branch diff against ${branchRef} (${branchRef}...HEAD)`,
       diff,
@@ -277,16 +363,60 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
     };
   }
 
-  const status = statusShort(cwd);
-  const tracked = workingTreeDiff(cwd);
+  const stagedResult = git(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--"], cwd);
+  if (stagedResult.status !== 0) {
+    return {
+      label: "working tree diff",
+      diff: "",
+      hasChanges: false,
+      error: gitFailure(stagedResult, "Reading staged changes")
+    };
+  }
+  const unstagedResult = git(["diff", "--no-ext-diff", "--no-textconv", "--"], cwd);
+  if (unstagedResult.status !== 0) {
+    return {
+      label: "working tree diff",
+      diff: "",
+      hasChanges: false,
+      error: gitFailure(unstagedResult, "Reading unstaged changes")
+    };
+  }
+  const tracked = [stagedResult.stdout, unstagedResult.stdout]
+    .filter((part) => part.trim())
+    .join("\n");
   const untracked = listUntracked(cwd);
-  const untrackedBlock = untracked
-    .map((file) => renderUntracked(cwd, file, { checkoutRoot }))
-    .join("\n\n");
+  if (untracked.error) {
+    return {
+      label: "working tree diff",
+      diff: "",
+      hasChanges: false,
+      error: untracked.error
+    };
+  }
+  const untrackedParts = [];
+  let untrackedBytes = 0;
+  let untrackedRenderTruncated = false;
+  for (const file of untracked.files) {
+    const rendered = renderUntracked(cwd, file, { checkoutRoot });
+    const renderedBytes = Buffer.byteLength(rendered, "utf8");
+    if (untrackedBytes + renderedBytes > MAX_DIFF_BYTES) {
+      untrackedRenderTruncated = true;
+      break;
+    }
+    untrackedParts.push(rendered);
+    untrackedBytes += renderedBytes + 2;
+  }
+  const untrackedBlock = untrackedParts.join("\n\n");
   const diff = [
     status ? `# git status\n${status}` : "",
     tracked ? `# tracked changes (staged + unstaged)\n${tracked}` : "",
-    untrackedBlock ? `# untracked files\n${untrackedBlock}` : ""
+    untrackedBlock ? `# untracked files\n${untrackedBlock}` : "",
+    untracked.truncated
+      ? `# untracked file notice\nOnly the first ${MAX_UNTRACKED_FILES} bounded paths were included.`
+      : "",
+    untrackedRenderTruncated
+      ? "# untracked content notice\nAdditional untracked content was omitted after reaching the review budget."
+      : ""
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -297,9 +427,29 @@ export function resolveDiff({ scope = "auto", base = null, cwd = process.cwd() }
 // Compose the read-only review prompt from a resolved diff. Pure + testable.
 export function buildReviewPrompt({ label, diff }) {
   const raw = String(diff ?? "");
-  const body = truncate(raw, MAX_DIFF_CHARS);
+  const rawBytes = Buffer.byteLength(raw, "utf8");
+  let body = raw;
+  if (rawBytes > MAX_DIFF_BYTES) {
+    // Find the longest UTF-16 prefix whose UTF-8 encoding fits the byte budget.
+    // Binary search avoids copying a potentially multi-megabyte diff once per
+    // code point, and the surrogate adjustment keeps the prefix well-formed.
+    let low = 0;
+    let high = raw.length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (Buffer.byteLength(raw.slice(0, middle), "utf8") <= MAX_DIFF_BYTES) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    if (low > 0 && /[\uD800-\uDBFF]/.test(raw[low - 1])) {
+      low -= 1;
+    }
+    body = raw.slice(0, low);
+  }
   const truncatedNote =
-    raw.length > MAX_DIFF_CHARS ? "\n(Note: the diff was truncated to fit the size limit.)" : "";
+    rawBytes > MAX_DIFF_BYTES ? "\n(Note: the diff was truncated to fit the size limit.)" : "";
   return [
     "You are an expert code reviewer acting as an outside model with different priors than the author.",
     `Review the following ${label}. Identify bugs, correctness issues, security problems, and risky changes.`,

@@ -10,7 +10,16 @@ test("hardening: special characters in a prompt pass through as one unescaped ar
   // interpolated or needs escaping — the prompt arrives at grok byte-for-byte.
   const nasty = 'quote " backtick ` dollar $HOME semicolon ; pipe | newline\nrm -rf /';
   const args = buildGrokArgs({ prompt: nasty, model: "grok-4.5" });
-  assert.equal(args[args.indexOf("-p") + 1], nasty);
+  assert.ok(args.includes(`--single=${nasty}`));
+  assert.equal(args.some((arg) => arg === nasty), false);
+});
+
+test("hardening: option-shaped prompts stay bound as values", () => {
+  for (const prompt of ["--help", "--model=attacker", "-p", "--"]) {
+    const args = buildGrokArgs({ prompt, model: "grok-4.5" });
+    assert.equal(args[0], `--single=${prompt}`);
+    assert.equal(args.includes(prompt), false);
+  }
 });
 
 test("hardening: special characters in a diff survive into the review prompt", () => {
@@ -25,6 +34,15 @@ test("hardening: oversized diff is truncated with a note", () => {
   const prompt = buildReviewPrompt({ label: "working tree diff", diff: big });
   assert.ok(prompt.includes("truncated"));
   assert.ok(prompt.length < big.length);
+});
+
+test("hardening: multi-byte diffs are truncated against the UTF-8 argv budget", () => {
+  const prompt = buildReviewPrompt({
+    label: "working tree diff",
+    diff: "😀".repeat(100 * 1024)
+  });
+  assert.ok(prompt.includes("truncated"));
+  assert.ok(Buffer.byteLength(prompt, "utf8") < 100 * 1024);
 });
 
 test("hardening: buildGrokArgs tolerates empty/missing prompt without throwing", () => {
@@ -44,4 +62,25 @@ test("hardening: a non-zero exit surfaces stderr, never a raw stack", () => {
   assert.equal(result.ok, false);
   assert.equal(result.error, "authentication failed");
   assert.ok(!/at Object|node:internal/.test(renderResult(result)));
+});
+
+test("hardening: renderResult redacts credentials even for caller-constructed results", () => {
+  const previous = process.env.XAI_API_KEY;
+  process.env.XAI_API_KEY = "render-secret-value";
+  try {
+    assert.doesNotMatch(
+      renderResult({
+        ok: false,
+        error: "render-secret-value",
+        stderr: "Bearer another.secret/token"
+      }),
+      /render-secret-value|another\.secret/
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.XAI_API_KEY;
+    } else {
+      process.env.XAI_API_KEY = previous;
+    }
+  }
 });

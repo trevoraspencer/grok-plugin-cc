@@ -1,6 +1,6 @@
 ---
 description: Read-only Grok review of your working tree or a branch diff (an outside-model second opinion)
-argument-hint: '[--model <slug>] [--base <ref>] [--scope auto|working-tree|branch] [--search] [--thought] [--background] [--print-args]'
+argument-hint: '[--model <slug>] [--base <ref>] [--scope auto|working-tree|branch] [--search] [--max-turns <n>] [--effort <level>|--reasoning-effort <level>] [--thought] [--background] [--print-args]'
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 disable-model-invocation: true
 ---
@@ -43,7 +43,10 @@ Notes:
 - Running outside a git repository is also an error (exit 1), not "Nothing to review."
 - Review uses the configured `default_model` (`grok-4.5`). `--model` accepts only `grok-4.5` or `grok-composer-2.5-fast`; legacy IDs such as `grok-build` are deprecated and rejected.
 - Live search is off for review unless `--search` is passed.
+- `--max-turns` and either `--effort` or `--reasoning-effort` can bound the call. Supplying both effort aliases is rejected as ambiguous.
 - Working-tree review includes staged, unstaged, and untracked files. Oversized or binary untracked files are marked as skipped, and the final review input is size-capped.
+- Base refs are accepted only as bounded branch/tag/remote/SHA or simple `HEAD~N` values; option, reflog, and revision-range syntax is rejected.
+- The Grok process cannot inspect or modify other workspace files: subagents and memory are disabled, and Bash, Edit, Read, Grep, and MCP workspace tools are denied.
 - `--thought` includes Grok's returned reasoning in a collapsed details block.
 - `--print-args` prints the exact Grok CLI argv and exits without calling Grok; it takes precedence over `--background` and works even when the selected diff is empty.
 - For custom or more adversarial review framing, that is a phase-2 feature (`/grok:adversarial-review`), not yet built.

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { parseInvocation, resolveWebSearch } from "../scripts/grok.mjs";
+import { parseInvocation, resolveWebSearch, validateInvocation } from "../scripts/grok.mjs";
 import { selectReviewTarget, buildReviewPrompt, resolveDiff } from "../scripts/lib/git.mjs";
 import { resolveModel } from "../scripts/lib/config.mjs";
 
@@ -32,6 +32,40 @@ test("ask: a bare prompt yields no options and the full prompt", () => {
   const { options, positionals } = parseInvocation(["what is the capital of France"]);
   assert.deepEqual(options, {});
   assert.equal(positionals.join(" "), "what is the capital of France");
+});
+
+test("ask: option-looking words inside prompt text remain prompt data", () => {
+  const { options, positionals } = parseInvocation([
+    "explain --model grok-build and --no-search behavior"
+  ]);
+  assert.deepEqual(options, {});
+  assert.equal(
+    positionals.join(" "),
+    "explain --model grok-build and --no-search behavior"
+  );
+});
+
+test("dispatcher: conflicting and out-of-range options fail before execution", () => {
+  assert.throws(
+    () => validateInvocation(parseInvocation(["--search --no-search hi"]), "ask"),
+    /only one/i
+  );
+  assert.throws(
+    () => validateInvocation(parseInvocation(["--effort low --reasoning-effort high hi"]), "ask"),
+    /only one/i
+  );
+  assert.throws(
+    () => validateInvocation(parseInvocation(["--max-turns 0 hi"]), "ask"),
+    /max-turns/
+  );
+  assert.throws(
+    () => validateInvocation(parseInvocation(["--json hi"]), "ask"),
+    /unsupported option/i
+  );
+  assert.throws(
+    () => validateInvocation(parseInvocation(["unexpected"]), "review"),
+    /positional/
+  );
 });
 
 test("ask: default model is search_model (grok-4.5); --model overrides it", () => {

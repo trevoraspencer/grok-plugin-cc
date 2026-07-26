@@ -15,13 +15,17 @@ function validatorFor(id) {
 }
 
 const CONFORMING_ARGV = [
-  "-p",
-  "What is 2+2?",
-  "--output-format",
-  "json",
-  "-m",
-  "grok-composer-2.5-fast",
+  "--single=What is 2+2?",
+  "--output-format=json",
+  "--model=grok-composer-2.5-fast",
   "--no-auto-update",
+  "--no-subagents",
+  "--no-memory",
+  "--deny=Bash",
+  "--deny=Edit",
+  "--deny=Read",
+  "--deny=Grep",
+  "--deny=MCPTool",
   "--disable-web-search"
 ];
 
@@ -46,13 +50,17 @@ test("eval harness: ask dry-run fails closed on drifted (non-array) JSON", () =>
 test("eval harness: review dry-run fails closed on drifted (non-array) JSON", () => {
   const validate = validatorFor("review_dry_run_read_only");
   const conforming = [
-    "-p",
-    "Review the following working tree diff. Do NOT rewrite the code.",
-    "--output-format",
-    "json",
-    "-m",
-    "grok-composer-2.5-fast",
+    "--single=Review the following working tree diff. Do NOT rewrite the code.",
+    "--output-format=json",
+    "--model=grok-composer-2.5-fast",
     "--no-auto-update",
+    "--no-subagents",
+    "--no-memory",
+    "--deny=Bash",
+    "--deny=Edit",
+    "--deny=Read",
+    "--deny=Grep",
+    "--deny=MCPTool",
     "--disable-web-search"
   ];
   assert.equal(validate(JSON.stringify(conforming)).ok, true);

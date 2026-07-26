@@ -31,8 +31,7 @@ test("mcp: initialize falls back to a supported protocol for an unknown version"
     method: "initialize",
     params: { protocolVersion: "1999-01-01" }
   });
-  assert.equal(typeof res.result.protocolVersion, "string");
-  assert.notEqual(res.result.protocolVersion, "1999-01-01");
+  assert.equal(res.result.protocolVersion, "2025-11-25");
 });
 
 test("mcp: tools/list returns exactly grok_search and grok_ask with required fields", async () => {
@@ -62,6 +61,20 @@ test("mcp: notifications/initialized produces no response", async () => {
   assert.equal(res, null);
 });
 
+test("mcp: tools/call notifications are ignored without invoking Grok", async () => {
+  let calls = 0;
+  const res = await handleMessage(
+    {
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: "grok_ask", arguments: { prompt: "must not run" } }
+    },
+    { run: async () => ((calls += 1), { ok: true, text: "x" }), config: FAKE_CONFIG }
+  );
+  assert.equal(res, null);
+  assert.equal(calls, 0);
+});
+
 test("mcp: unknown method with an id yields -32601", async () => {
   const res = await handleMessage({ jsonrpc: "2.0", id: 9, method: "does/notexist" });
   assert.equal(res.error.code, -32601);
@@ -70,6 +83,13 @@ test("mcp: unknown method with an id yields -32601", async () => {
 test("mcp: a non-JSON-RPC object yields -32600", async () => {
   const res = await handleMessage({ hello: "world" });
   assert.equal(res.error.code, -32600);
+});
+
+test("mcp: invalid ids and unexpected request members fail closed", async () => {
+  const invalidId = await handleMessage({ jsonrpc: "2.0", id: true, method: "ping" });
+  assert.equal(invalidId.error.code, -32600);
+  const extra = await handleMessage({ jsonrpc: "2.0", id: 1, method: "ping", surprise: true });
+  assert.equal(extra.error.code, -32600);
 });
 
 test("mcp: tools/call grok_search uses the search model + web search (fake runner)", async () => {
@@ -121,6 +141,26 @@ test("mcp: tools/call with empty query is a tool execution error (isError true)"
     { run: async () => ({ ok: true, text: "x" }), config: FAKE_CONFIG }
   );
   assert.equal(res.result.isError, true);
+});
+
+test("mcp: runtime validation matches strict tool schemas before invoking Grok", async () => {
+  const badArguments = [
+    { name: "grok_ask", arguments: { prompt: "ok", extra: true } },
+    { name: "grok_ask", arguments: { prompt: 42 } },
+    { name: "grok_ask", arguments: { prompt: "bad\0prompt" } },
+    { name: "grok_ask", arguments: { prompt: "ok", search: "false" } },
+    { name: "grok_search", arguments: { query: "x".repeat(100 * 1024 + 1) } },
+    { name: "grok_search", arguments: { query: "😀".repeat(30 * 1024) } }
+  ];
+  let calls = 0;
+  for (const params of badArguments) {
+    const res = await handleMessage(
+      { jsonrpc: "2.0", id: 100, method: "tools/call", params },
+      { run: async () => ((calls += 1), { ok: true, text: "x" }), config: FAKE_CONFIG }
+    );
+    assert.equal(res.result?.isError ?? res.error?.code === -32602, true);
+  }
+  assert.equal(calls, 0);
 });
 
 test("mcp: grok_ask honors search:false (fake runner)", async () => {
@@ -276,4 +316,46 @@ test("mcp: child process handshake + malformed line, server stays alive", async 
   assert.ok(init && init.result.serverInfo.name === "grok");
   assert.ok(list && list.result.tools.length === 2);
   assert.ok(parseError, "malformed line should produce a -32700 parse error and not crash the server");
+});
+
+test("mcp: oversized input is rejected and the next bounded request still succeeds", async () => {
+  const server = fileURLToPath(new URL("../scripts/mcp-server.mjs", import.meta.url));
+  const child = spawn(process.execPath, [server], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stdin.write(`${"x".repeat(1024 * 1024 + 1)}\n`);
+  child.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 91, method: "ping" })}\n`);
+  const code = await new Promise((resolve) => child.on("close", resolve));
+  const messages = stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(JSON.parse);
+  assert.equal(code, 0);
+  assert.ok(messages.some((message) => message.error?.code === -32700));
+  assert.deepEqual(messages.find((message) => message.id === 91)?.result, {});
+});
+
+test("mcp: transport bounds concurrent requests", async () => {
+  const server = fileURLToPath(new URL("../scripts/mcp-server.mjs", import.meta.url));
+  const child = spawn(process.execPath, [server], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  const requests = Array.from({ length: 9 }, (_, index) =>
+    JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "ping" })
+  ).join("\n");
+  child.stdin.end(`${requests}\n`);
+  const code = await new Promise((resolve) => child.on("close", resolve));
+  const messages = stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(JSON.parse);
+  assert.equal(code, 0);
+  assert.equal(messages.filter((message) => message.error?.code === -32000).length, 1);
+  assert.equal(messages.filter((message) => message.result).length, 8);
 });

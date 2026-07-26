@@ -8,7 +8,7 @@
 
 A personal, fully-controlled Claude Code plugin that brings xAI's **Grok Build** CLI (`grok`) into Claude Code as a set of `/grok:*` slash commands plus a Grok-backed MCP server. It is **Grok-native by design** — inspired by `openai/codex-plugin-cc`'s command/job/subagent *UX*, but built around what the `grok` CLI actually offers (headless one-shot execution and live web/X search), not a port of Codex's architecture.
 
-Deliberate non-choice: **this does not use ACP.** Grok's `grok agent stdio` speaks the Agent Client Protocol, but ACP casts Grok as the *agent* and expects an *editor client* to service its file/terminal/permission callbacks — which a Claude Code plugin is not. The idiomatic, low-friction path for "Claude Code calls Grok" is headless `grok -p --output-format json` plus an MCP server, so that is what this plugin uses.
+Deliberate non-choice: **this does not use ACP.** Grok's `grok agent stdio` speaks the Agent Client Protocol, but ACP casts Grok as the *agent* and expects an *editor client* to service its file/terminal/permission callbacks — which a Claude Code plugin is not. The idiomatic, low-friction path for "Claude Code calls Grok" is bounded headless `grok --single=<prompt> --output-format=json` plus an MCP server, so that is what this plugin uses.
 
 ## Why this exists
 
@@ -40,14 +40,14 @@ Four motivations, in MVP priority order:
 
 ### Transport — headless + MCP hybrid (not ACP)
 
-The implementation deliberately targets Grok Build's `grok -p "..."` headless mode and does not use `grok agent stdio`/ACP. Therefore:
+The implementation deliberately targets Grok Build's `grok --single=<prompt>` headless mode and does not use `grok agent stdio`/ACP. Therefore:
 
-- **Slash commands** → a thin `.mjs` wrapper → `grok -p --output-format json` (always with `--no-auto-update` in automation). Stateless, one call per invocation; no broker or daemon.
+- **Slash commands** → a thin `.mjs` wrapper → `grok --single=<prompt> --output-format=json` with auto-update, subagents, memory, and workspace tools disabled. Stateless, one call per invocation; no broker or daemon.
 - **MCP server** (`.mcp.json` at plugin root) exposing **`grok_search`** and **`grok_ask`** so Claude can consult Grok — especially live search — autonomously during its own work.
 
 ### Background jobs — lightweight
 
-Detach a `grok -p` call using **Claude Code's own background-bash** (`run_in_background`). The dispatcher creates a transient JSON record and output file under the OS temporary directory, records the wrapper and Grok child PIDs, and exposes that state through `/grok:status`, `/grok:result`, and `/grok:cancel`. Dead wrappers are reconciled to `failed` on read; cancellation signals both recorded processes. This is intentionally lightweight local process state, not a durable database or an in-repo result artifact.
+Detach a headless call using **Claude Code's own background-bash** (`run_in_background`). The dispatcher creates private atomic records and bounded output in an owner-only temporary directory, binds wrapper and child PIDs to process-start identities, and exposes that state through `/grok:status`, `/grok:result`, and `/grok:cancel`. Dead wrappers reconcile to `failed`; cancellation first persists a sticky terminal state, then terminates the verified Grok process group and wrapper. This is intentionally lightweight local process state, not a durable database or an in-repo result artifact.
 
 ### Models
 
@@ -58,7 +58,7 @@ Two configurable routes are implemented, both allowlisted:
 
 `fallback_model = grok-composer-2.5-fast` is used when the selected route has no usable ID. `--model`/`-m` overrides routing per call. As verified against the live Grok Build catalog on 2026-07-10, the supported IDs are `grok-4.5` and `grok-composer-2.5-fast`; older IDs (including `grok-build`) are intentionally deprecated by this plugin and rejected with a migration error at the dispatcher and MCP boundaries.
 
-The ask command also forwards `--max-turns`. `--effort` and `--reasoning-effort` are accepted as aliases and normalized to one `--reasoning-effort` CLI argument (the long form wins if both are supplied). Grok 4.5 supports low, medium, and high effort; Composer follows its server-provided configuration.
+The ask command also forwards `--max-turns`. `--effort` and `--reasoning-effort` are accepted as aliases and normalized to one `--reasoning-effort=<value>` CLI argument; supplying both is rejected as ambiguous. Grok 4.5 supports low, medium, and high effort; Composer follows its server-provided configuration.
 
 ### Safety
 
@@ -138,5 +138,5 @@ Personal in origin; **publicly released under [MIT](LICENSE)** on GitHub at [tre
 ## Open items to verify at scaffold time — RESOLVED (2026-06-14)
 
 - ~~Exact `-m` slug for the chosen default model; pin a fallback.~~ → Verified slugs at implementation time (2026-06-14) were `grok-composer-2.5-fast` (review) and `grok-build` (ask/search); re-verified 2026-07-10: `grok-4.5` is now the primary review/search model and `grok-composer-2.5-fast` the fast alternative/fallback. All centralized in `config/defaults.json` and enforced by `scripts/lib/config.mjs`.
-- ~~Node floor against the installed `grok` version.~~ → Node 18+ floor (built against Node 22; current compatibility re-verified with `grok` 0.2.93). `/grok:setup` warns below either floor.
+- ~~Node floor against the installed `grok` version.~~ → Node 18+ floor, continuously tested on Node 18/20/22/24; current compatibility requires Grok Build 0.2.111+ and was locally re-verified with 0.2.112. `/grok:setup` warns below either floor.
 - ~~Whether Grok's live search is on by default under `-p` or needs a flag.~~ → Live search is **on by default** under `-p`; `--disable-web-search` turns it off. Note: the search worker can transiently fail (exit 0, empty text, `stopReason: Cancelled`), so the wrapper treats an empty answer as a failure and retries once.

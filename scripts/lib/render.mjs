@@ -2,6 +2,8 @@
 // Used identically by the slash-command dispatcher and the MCP server so that
 // citations and error formatting render the same everywhere.
 
+import { redactGrokSecrets } from "./grok.mjs";
+
 export function truncate(value, max = 100000) {
   const text = String(value ?? "");
   if (text.length <= max) {
@@ -12,19 +14,19 @@ export function truncate(value, max = 100000) {
 
 export function renderResult(result, { showThought = false } = {}) {
   if (!result || result.ok !== true) {
-    const message = (result && result.error) || "Unknown error.";
+    const message = redactGrokSecrets((result && result.error) || "Unknown error.");
     const lines = ["> ⚠ **Grok error**", "", message];
-    const stderr = result && result.stderr ? String(result.stderr).trim() : "";
+    const stderr = result && result.stderr ? redactGrokSecrets(result.stderr).trim() : "";
     if (stderr && stderr !== message) {
       lines.push("", "```text", truncate(stderr, 4000), "```");
     }
     return `${lines.join("\n")}\n`;
   }
 
-  const body = (result.text || "").trim() || "_(Grok returned no text.)_";
+  const body = redactGrokSecrets(result.text || "").trim() || "_(Grok returned no text.)_";
   let out = body;
   if (showThought && result.thought && result.thought.trim()) {
-    out += `\n\n<details>\n<summary>Reasoning</summary>\n\n${truncate(result.thought.trim(), 8000)}\n\n</details>`;
+    out += `\n\n<details>\n<summary>Reasoning</summary>\n\n${truncate(redactGrokSecrets(result.thought).trim(), 8000)}\n\n</details>`;
   }
   return `${out}\n`;
 }

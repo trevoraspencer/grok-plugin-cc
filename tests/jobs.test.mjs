@@ -69,14 +69,13 @@ test("jobs: markFailed and markCancelled set terminal states", () => {
 test("jobs: listJobs returns newest first", () => {
   freshJobsDir();
   const a = createJob({ kind: "ask" });
-  // Force a distinct, later id so ordering is deterministic regardless of clock granularity.
-  const laterId = `${Date.now() + 1000}-aaaaaaaa`;
-  fs.writeFileSync(
-    path.join(process.env.GROK_JOBS_DIR, `${laterId}.json`),
-    JSON.stringify({ id: laterId, kind: "review", status: "done", startedAt: new Date().toISOString() })
-  );
+  const firstTimestamp = Number(a.id.slice(0, 13));
+  while (Date.now() <= firstTimestamp) {
+    // Keep the test deterministic without introducing an async timing window.
+  }
+  const later = createJob({ kind: "review" });
   const ids = listJobs().map((j) => j.id);
-  assert.equal(ids[0], laterId);
+  assert.equal(ids[0], later.id);
   assert.ok(ids.includes(a.id));
 });
 
@@ -104,12 +103,10 @@ test("jobs: cancelJob terminates a running pid and marks cancelled", () => {
 
 test("jobs: a 'running' record whose process died reads back as failed, not running forever", async () => {
   freshJobsDir();
-  // A process that is certainly gone by the time we probe it.
-  const dead = spawn(process.execPath, ["-e", "process.exit(0)"]);
-  await new Promise((resolve) => dead.on("exit", resolve));
-
+  const dead = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 500)"]);
   const job = createJob({ kind: "ask" });
-  markRunning(job.id, dead.pid);
+  assert.equal(markRunning(job.id, dead.pid)?.status, "running");
+  await new Promise((resolve) => dead.on("exit", resolve));
 
   const seen = readJob(job.id);
   assert.equal(seen.status, "failed");
@@ -182,11 +179,11 @@ test("jobs: validates the canonical job ID format", () => {
   }
 });
 
-test("jobs: validates process IDs as positive safe integers", () => {
-  assert.equal(isValidJobPid(1), true);
+test("jobs: validates process IDs without ever accepting init or out-of-range values", () => {
+  assert.equal(isValidJobPid(1), false);
   assert.equal(isValidJobPid(process.pid), true);
-  assert.equal(isValidJobPid(Number.MAX_SAFE_INTEGER), true);
-  for (const pid of [0, -1, 1.5, "123", Number.MAX_SAFE_INTEGER + 1, NaN, Infinity]) {
+  assert.equal(isValidJobPid(2_147_483_647), true);
+  for (const pid of [0, 1, -1, 1.5, "123", 2_147_483_648, Number.MAX_SAFE_INTEGER, NaN, Infinity]) {
     assert.equal(isValidJobPid(pid), false, `expected ${String(pid)} to be invalid`);
   }
 });
@@ -244,7 +241,7 @@ test("jobs: invalid process IDs cannot enter records through update helpers", ()
   assert.equal(unchanged.childPid, null);
 });
 
-test("jobs: a running record without a process ID fails closed without probing a process group", () => {
+test("jobs: a running record without a process ID is rejected without probing a process group", () => {
   const dir = freshJobsDir();
   const id = "1700000000000-deadbeef";
   fs.writeFileSync(
@@ -266,13 +263,117 @@ test("jobs: a running record without a process ID fails closed without probing a
     return true;
   };
   try {
-    const seen = readJob(id);
-    assert.equal(seen.status, "failed");
-    assert.match(seen.summary, /no valid running process id/);
+    assert.equal(readJob(id), null);
   } finally {
     process.kill = originalKill;
   }
   assert.equal(signalCalls, 0);
+});
+
+test("jobs: registry directory and plugin-created files are owner-only", () => {
+  const dir = freshJobsDir();
+  fs.chmodSync(dir, 0o777);
+  const job = createJob({ kind: "ask" });
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(dir, `${job.id}.json`)).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(dir, `${job.id}.out`)).mode & 0o777, 0o600);
+});
+
+test("jobs: records or output exposed through permissive POSIX modes fail closed", () => {
+  if (process.platform === "win32") {
+    return;
+  }
+  const dir = freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  const record = path.join(dir, `${job.id}.json`);
+  const output = path.join(dir, `${job.id}.out`);
+
+  fs.chmodSync(record, 0o644);
+  assert.equal(readJob(job.id), null);
+  fs.chmodSync(record, 0o600);
+  fs.chmodSync(output, 0o644);
+  assert.equal(readOutput(job.id), null);
+});
+
+test("jobs: a symlinked registry directory fails closed", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-jobs-dir-link-"));
+  const target = path.join(root, "target");
+  const linked = path.join(root, "jobs");
+  fs.mkdirSync(target, { mode: 0o700 });
+  fs.symlinkSync(target, linked, process.platform === "win32" ? "junction" : "dir");
+  process.env.GROK_JOBS_DIR = linked;
+  assert.throws(() => createJob({ kind: "ask" }), /secure Grok job directory/i);
+  assert.deepEqual(listJobs(), []);
+});
+
+test("jobs: output symlinks cannot disclose or overwrite their targets", () => {
+  const dir = freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  const output = path.join(dir, `${job.id}.out`);
+  const victim = path.join(dir, "victim");
+  fs.writeFileSync(victim, "secret");
+  fs.unlinkSync(output);
+  fs.symlinkSync(victim, output);
+
+  assert.equal(readOutput(job.id), null);
+  assert.equal(writeOutput(job.id, "safe replacement"), true);
+  assert.equal(fs.readFileSync(victim, "utf8"), "secret");
+  assert.equal(fs.lstatSync(output).isSymbolicLink(), false);
+  assert.equal(readOutput(job.id), "safe replacement");
+});
+
+test("jobs: captured output is bounded and explicitly marked when truncated", () => {
+  freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  assert.equal(writeOutput(job.id, "x".repeat(5 * 1024 * 1024)), true);
+  const output = readOutput(job.id);
+  assert.ok(Buffer.byteLength(output) <= 4 * 1024 * 1024);
+  assert.match(output, /\[output truncated at 4 MiB\]/);
+});
+
+test("jobs: terminal cancellation is sticky against late wrapper completion", () => {
+  freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  markRunning(job.id, process.pid);
+  markCancelled(job.id);
+  markDone(job.id, "late success");
+  markFailed(job.id, "late failure");
+  assert.equal(readJob(job.id).status, "cancelled");
+});
+
+test("jobs: a mismatched process start token is reconciled without signaling", () => {
+  const dir = freshJobsDir();
+  const job = createJob({ kind: "ask" });
+  markRunning(job.id, process.pid);
+  const file = path.join(dir, `${job.id}.json`);
+  const record = JSON.parse(fs.readFileSync(file, "utf8"));
+  record.pidStart = "proc:0";
+  fs.writeFileSync(file, JSON.stringify(record), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+
+  const originalKill = process.kill;
+  let destructiveSignals = 0;
+  process.kill = (pid, signal) => {
+    if (signal && signal !== 0) destructiveSignals += 1;
+    return originalKill(pid, signal);
+  };
+  try {
+    const seen = readJob(job.id);
+    assert.equal(seen.status, "failed");
+    assert.match(seen.summary, /no longer running as the recorded job process/);
+  } finally {
+    process.kill = originalKill;
+  }
+  assert.equal(destructiveSignals, 0);
+});
+
+test("jobs: registry growth is bounded", () => {
+  const dir = freshJobsDir();
+  for (let index = 0; index < 1000; index += 1) {
+    const id = `1700000000000-${index.toString(16).padStart(8, "0")}`;
+    fs.writeFileSync(path.join(dir, `${id}.json`), "");
+  }
+  assert.throws(() => createJob({ kind: "ask" }), /registry is full/);
 });
 
 test("jobs: traversal IDs cannot read, write, or signal outside the jobs directory", () => {

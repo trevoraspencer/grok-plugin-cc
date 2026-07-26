@@ -6,7 +6,11 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const ITERATIONS = Number.parseInt(process.env.BENCH_ITERATIONS || "5", 10);
+const requestedIterations = Number.parseInt(process.env.BENCH_ITERATIONS || "5", 10);
+const ITERATIONS =
+  Number.isInteger(requestedIterations) && requestedIterations > 0 && requestedIterations <= 1000
+    ? requestedIterations
+    : 5;
 
 const CASES = [
   {
