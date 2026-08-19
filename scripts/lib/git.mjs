@@ -75,30 +75,9 @@ export function isGitRepo(cwd = process.cwd()) {
   return git(["rev-parse", "--is-inside-work-tree"], cwd).status === 0;
 }
 
-export function statusShort(cwd = process.cwd()) {
-  return git(["status", "--short", "--untracked-files=all"], cwd).stdout.trim();
-}
-
-export function hasChanges(cwd = process.cwd()) {
-  return isGitRepo(cwd) && statusShort(cwd).length > 0;
-}
-
-export function workingTreeDiff(cwd = process.cwd()) {
-  const staged = git(["diff", "--cached", "--no-ext-diff"], cwd).stdout;
-  const unstaged = git(["diff", "--no-ext-diff"], cwd).stdout;
-  return [staged, unstaged].filter((part) => part.trim()).join("\n");
-}
-
-export function branchDiff(base, cwd = process.cwd()) {
-  if (!isSafeRevision(base)) {
-    return "";
-  }
-  return git(["diff", "--no-ext-diff", "--no-textconv", `${base}...HEAD`, "--"], cwd).stdout;
-}
-
 // Whether a ref resolves to a commit. Used to reject a typo'd --base before
-// branchDiff (whose empty stdout on a bad ref would otherwise read as "no
-// changes" and hide a whole branch).
+// the live branch diff (whose empty stdout on a bad ref would otherwise read
+// as "no changes" and hide a whole branch).
 export function refExists(ref, cwd = process.cwd()) {
   return (
     isSafeRevision(ref) &&

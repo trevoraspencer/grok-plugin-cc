@@ -1,7 +1,8 @@
 ---
 description: Read-only Grok review of your working tree or a branch diff (an outside-model second opinion)
 argument-hint: '[--model <slug>] [--base <ref>] [--scope auto|working-tree|branch] [--search] [--max-turns <n>] [--effort <level>|--reasoning-effort <level>] [--thought] [--background] [--print-args]'
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/grok.mjs *)
+disallowed-tools: Edit, Write, NotebookEdit, Bash(git:*)
 disable-model-invocation: true
 ---
 
@@ -45,8 +46,9 @@ Notes:
 - Live search is off for review unless `--search` is passed.
 - `--max-turns` and either `--effort` or `--reasoning-effort` can bound the call. Supplying both effort aliases is rejected as ambiguous.
 - Working-tree review includes staged, unstaged, and untracked files. Oversized or binary untracked files are marked as skipped, and the final review input is size-capped.
+- The selected diff and any included untracked file bodies are sent to xAI. Gitignored files stay out. A new untracked `credentials.json` or a staged secret does not. Do not run this on a dirty tree that contains secrets.
 - Base refs are accepted only as bounded branch/tag/remote/SHA or simple `HEAD~N` values; option, reflog, and revision-range syntax is rejected.
-- The Grok process cannot inspect or modify other workspace files: subagents and memory are disabled, and Bash, Edit, Read, Grep, and MCP workspace tools are denied.
+- The Grok child cannot inspect or modify other workspace files: subagents and memory are disabled, and Bash, Edit, Read, Grep, and MCP workspace tools are denied.
 - `--thought` includes Grok's returned reasoning in a collapsed details block.
 - `--print-args` prints the exact Grok CLI argv and exits without calling Grok; it takes precedence over `--background` and works even when the selected diff is empty.
 - For custom or more adversarial review framing, that is a phase-2 feature (`/grok:adversarial-review`), not yet built.

@@ -346,7 +346,7 @@ function cmdSetup(parsed, config) {
   out(parsed.options.json ? JSON.stringify(report, null, 2) : renderSetupReport(report));
   // --offline is reserved for the hermetic eval/benchmark schema smoke. It
   // reports missing external tooling but must not fail a clean CI runner.
-  if (!parsed.options.offline && !report.cliOk) {
+  if (!parsed.options.offline && (!report.cliOk || !report.modelsOk)) {
     process.exitCode = 1;
   }
 }

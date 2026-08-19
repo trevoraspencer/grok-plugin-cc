@@ -212,6 +212,40 @@ test("git: an unavailable file identity fails closed", (t) => {
   assert.doesNotMatch(rendered, new RegExp(secret));
 });
 
+test("git: working-tree review never runs repository textconv filters", (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX textconv fixture");
+    return;
+  }
+  const root = makeRepo(t);
+  const identity = spawnSync("git", ["config", "user.email", "a@b.c"], { cwd: root, encoding: "utf8" });
+  assert.equal(identity.status, 0, identity.stderr);
+  spawnSync("git", ["config", "user.name", "a"], { cwd: root, encoding: "utf8" });
+
+  const marker = path.join(root, "textconv-ran");
+  const filter = path.join(root, "evil-textconv");
+  fs.writeFileSync(filter, `#!/bin/sh\n: > '${marker}'\ncat "$1"\n`);
+  fs.chmodSync(filter, 0o755);
+  const configured = spawnSync("git", ["config", "diff.evil.textconv", filter], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(configured.status, 0, configured.stderr);
+  fs.writeFileSync(path.join(root, ".gitattributes"), "*.txt diff=evil\n");
+  fs.writeFileSync(path.join(root, "notes.txt"), "original contents\n");
+  const committed = spawnSync("git", ["add", "notes.txt", ".gitattributes"], { cwd: root, encoding: "utf8" });
+  assert.equal(committed.status, 0, committed.stderr);
+  const commit = spawnSync("git", ["commit", "-qm", "base"], { cwd: root, encoding: "utf8" });
+  assert.equal(commit.status, 0, commit.stderr);
+  fs.writeFileSync(path.join(root, "notes.txt"), "reviewed contents\n");
+
+  const review = resolveDiff({ scope: "working-tree", cwd: root });
+
+  assert.equal(review.hasChanges, true);
+  assert.match(review.diff, /reviewed contents/);
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test("git: a file that grows after fstat is bounded and rejected", (t) => {
   const root = makeRepo(t);
   const reviewed = path.join(root, "growing.txt");

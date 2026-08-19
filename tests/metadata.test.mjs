@@ -27,6 +27,7 @@ test("metadata: package and plugin manifests stay release-ready", () => {
   assert.equal(plugin.name, "grok");
   assert.equal(plugin.version, pkg.version);
   assert.equal(plugin.license, pkg.license);
+  assert.equal(plugin.defaultEnabled, false);
   assert.match(plugin.homepage, /^https:\/\/github\.com\/trevoraspencer\/grok-plugin-cc/);
 });
 
@@ -37,6 +38,7 @@ test("metadata: marketplace and MCP config point at local plugin entrypoints", (
   const grokPlugin = marketplace.plugins.find((plugin) => plugin.name === "grok");
   assert.ok(grokPlugin, "marketplace should publish the grok plugin");
   assert.equal(grokPlugin.source, "./");
+  assert.equal(grokPlugin.defaultEnabled, false);
   assert.equal(mcp.mcpServers.grok.command, "node");
   assert.deepEqual(mcp.mcpServers.grok.args, ["${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs"]);
 });
@@ -80,6 +82,8 @@ test("metadata: README documents current config, review, and background-job beha
   assert.match(readme, /process-start identities/);
   assert.match(readme, /Untracked files larger than 24 KiB/);
   assert.match(readme, /Review does not use live search unless `--search` is passed/);
+  assert.match(readme, /sent to xAI/);
+  assert.match(readme, /installs disabled/);
 });
 
 test("metadata: VISION uses the implemented commands layout and two-model routing", () => {
@@ -97,6 +101,7 @@ test("metadata: MCP ask description follows config unless explicitly overridden"
 
   assert.ok(mcp.includes("follows the plugin's web_search setting"));
   assert.ok(mcp.includes("Omit it to use the configured web_search default"));
+  assert.ok(mcp.includes("spends against the user's xAI quota"));
 });
 
 test("metadata: benchmark helper stays deterministic and dispatcher-only", () => {
@@ -161,7 +166,8 @@ test("metadata: release checklist preserves packaging and install gates", () => 
   const checklist = readText("auto/release-checklist.md");
 
   assert.ok(checklist.includes("Confirm `.claude-plugin/plugin.json` has the intended plugin name"));
-  assert.ok(checklist.includes("Confirm `.claude-plugin/marketplace.json` points the `grok` plugin at `./`."));
+  assert.ok(checklist.includes("defaultEnabled: false"));
+  assert.ok(checklist.includes("Confirm `.claude-plugin/marketplace.json` points the `grok` plugin at `./`"));
   assert.ok(checklist.includes('Confirm `.mcp.json` references `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs`.'));
   assert.ok(checklist.includes("Confirm `README.md` install instructions mention both GitHub marketplace install and local clone install."));
 });

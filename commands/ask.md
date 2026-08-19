@@ -1,7 +1,8 @@
 ---
 description: Ask Grok a one-shot question, leaning on live web/X search (the headline differentiator)
 argument-hint: '[--model <slug>] [--no-search|--search] [--max-turns <n>] [--effort <level>] [--reasoning-effort <level>] [--thought] [--background] [--print-args] <question>'
-allowed-tools: Bash(node:*)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/grok.mjs *)
+disallowed-tools: Edit, Write, NotebookEdit
 disable-model-invocation: true
 ---
 
@@ -38,4 +39,4 @@ Notes:
 - `--max-turns <n>` overrides the configured `max_turns` for this call. `--effort` and `--reasoning-effort` are aliases sent as one canonical `--reasoning-effort=<value>` argument; supplying both is rejected as ambiguous.
 - `--thought` includes Grok's returned reasoning in a collapsed details block.
 - `--print-args` prints the exact Grok CLI argv and exits without calling Grok; it takes precedence over `--background`.
-- This command is read-only: every invocation disables subagents and memory and denies Grok's Bash, Edit, Read, Grep, and MCP workspace tools.
+- The Grok child is read-only: every invocation disables subagents and memory and denies Grok's Bash, Edit, Read, Grep, and MCP workspace tools.

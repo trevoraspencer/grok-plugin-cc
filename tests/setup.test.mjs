@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +32,7 @@ test("setup: OK when grok present + auth present + node ok", () => {
   });
   assert.equal(report.ok, true);
   assert.equal(report.cliOk, true);
+  assert.equal(report.modelsOk, true);
   assert.equal(report.verdict, "OK");
   assert.ok(report.checks.find((c) => c.name === "grok CLI" && c.status === "ok"));
   assert.ok(report.checks.find((c) => c.name === "models" && c.detail.includes("grok-4.5")));
@@ -59,7 +63,8 @@ test("setup: auth missing → auth-needed step and non-OK", () => {
   assert.ok(report.checks.find((c) => c.name === "auth" && c.status === "warn"));
   assert.ok(report.nextSteps.some((s) => /XAI_API_KEY|sign in/i.test(s)));
   assert.equal(report.ok, false);
-  assert.equal(report.cliOk, true); // CLI present, so exit code would still be 0
+  assert.equal(report.cliOk, true);
+  assert.equal(report.modelsOk, true); // auth/Node warnings do not fail the models check
 });
 
 test("setup: old Node → warn + upgrade step", () => {
@@ -82,7 +87,7 @@ test("setup: report is JSON-serializable with the documented shape", () => {
   });
   const round = JSON.parse(JSON.stringify(report));
   assert.ok(Array.isArray(round.checks));
-  for (const key of ["ok", "cliOk", "verdict", "checks", "nextSteps"]) {
+  for (const key of ["ok", "cliOk", "modelsOk", "verdict", "checks", "nextSteps"]) {
     assert.ok(key in round, `missing key ${key}`);
   }
 });
@@ -111,6 +116,7 @@ test("setup: unsupported or missing catalog models fail the model check", () => 
   });
   const check = report.checks.find((entry) => entry.name === "models");
   assert.equal(check.status, "fail");
+  assert.equal(report.modelsOk, false);
   assert.match(check.detail, /grok-build/);
   assert.match(check.detail, /grok-composer-2.5-fast/);
 });
@@ -144,4 +150,44 @@ test("setup: offline schema smoke never executes even an available Grok binary",
   const report = JSON.parse(result.stdout);
   assert.equal(report.cliOk, false);
   assert.ok(Array.isArray(report.checks));
+});
+
+function writeOverride(root, config) {
+  fs.mkdirSync(path.join(root, ".grok"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".grok", "grok-plugin.json"), `${JSON.stringify(config)}\n`);
+}
+
+test("setup: a failed models check exits 1 when the CLI is present", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-setup-models-"));
+  try {
+    writeOverride(root, { default_model: "grok-build" });
+    const result = spawnSync(process.execPath, [DISPATCHER, "setup", "--json"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, GROK_BIN: GROK_PROCESS_FIXTURE }
+    });
+    assert.equal(result.status, 1);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.cliOk, true);
+    assert.equal(report.modelsOk, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("setup: --offline still exits 0 when the models check fails", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-setup-offline-"));
+  try {
+    writeOverride(root, { default_model: "grok-build" });
+    const result = spawnSync(process.execPath, [DISPATCHER, "setup", "--json --offline"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, GROK_BIN: GROK_PROCESS_FIXTURE }
+    });
+    assert.equal(result.status, 0);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.modelsOk, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
