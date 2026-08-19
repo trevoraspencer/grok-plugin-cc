@@ -48,6 +48,8 @@ claude --plugin-dir ./grok-plugin-cc
 
 (There is no bare `/plugin install <path>` — use the marketplace add + install pair, or the one-session `--plugin-dir` flag.)
 
+The plugin installs disabled. After install, enable it with `/plugin` or `claude plugin enable grok`. That opt-in is intentional: the MCP tools can spend against your xAI quota without asking first.
+
 Run `/grok:setup` to confirm everything is wired up.
 
 ## Command reference
@@ -59,9 +61,9 @@ Run `/grok:setup` to confirm everything is wired up.
 | `/grok:status [job-id]` | List background jobs, or one job's detail | — |
 | `/grok:result <job-id>` | Print a finished job's captured output | — |
 | `/grok:cancel <job-id>` | Cancel a running background job | — |
-| `/grok:setup` | Diagnose CLI, auth, and resolved config | `--json` |
+| `/grok:setup` | Diagnose CLI, auth, and resolved config | `--json`, `--offline` |
 
-All live calls are strictly read-only at the process boundary: the wrapper disables Grok subagents and memory and denies Bash, Edit, Read, Grep, and MCP workspace tools. Review never edits files or applies patches and cannot inspect files beyond the bounded diff supplied in its prompt.
+All live Grok calls are read-only at the child process boundary: the wrapper disables Grok subagents and memory and denies Bash, Edit, Read, Grep, and MCP workspace tools. Review never edits files or applies patches. The Grok child only sees the bounded diff supplied in its prompt. Claude still runs the slash command in your session. During `/grok:review`, Edit, Write, NotebookEdit, and `git` are denied for that turn.
 
 For `ask` and `review`, `--max-turns` overrides the configured `max_turns` for that call. `--effort` and `--reasoning-effort` are aliases; use one, because supplying both is rejected as ambiguous. Whether effort affects a response depends on the selected model. `--thought` appends Grok's returned reasoning in a collapsed details block, and `--print-args` prints the exact CLI argv without invoking Grok. `--print-args` takes precedence over `--background`.
 
@@ -75,6 +77,8 @@ An empty diff prints `Nothing to review.` and exits 0. A `--base` ref that doesn
 
 Working-tree review includes staged, unstaged, and up to 1,000 untracked paths, enumerated with NUL delimiters so unusual filenames cannot merge records. Untracked files larger than 24 KiB, binary files, symlinks, and files whose identity changes while opening are represented by a skip marker. Git operations have time/output limits, and review diff content is capped at 96 KiB of UTF-8 so the final prompt remains below the operating system's single-argument limit. Review does not use live search unless `--search` is passed.
 
+That selected diff and any included untracked file bodies are sent to xAI. `ls-files --exclude-standard` honors gitignore, so an ignored `.env` stays out. A new untracked `credentials.json` or a staged secret does not. Do not run `/grok:review` on a dirty tree that contains secrets.
+
 ### Background jobs
 
 `ask` and `review` can run through Claude Code's background Bash support. The dispatcher writes private, atomic records and bounded output under an owner-specific OS-temporary directory; POSIX directories/files are `0700`/`0600`, while Windows uses the per-user temp directory's inherited ACLs. Symlinks are refused, and at most 1,000 jobs and 4 MiB of output per job are retained. Records bind both dispatcher and Grok child PIDs to process-start identities so a recycled PID is never signaled. Cancellation is persisted before the verified Grok process group and wrapper are terminated, and terminal states cannot be overwritten by a late exit. This is local process plumbing, not a durable database or a kept project artifact.
@@ -86,7 +90,7 @@ The plugin ships a zero-dependency stdio MCP server (`.mcp.json` → `scripts/mc
 - **`grok_search`** — `{ query, model? }` → **always** performs a live web/X search and returns Grok's synthesized answer, including citation links when Grok supplies them.
 - **`grok_ask`** — `{ prompt, model?, search? }` → a one-shot question. Live search follows the `web_search` config default; pass `search:true`/`false` to override per call.
 
-Claude can call these autonomously when it needs current information. The server implements the MCP `2025-11-25` stdio framing, rejects messages above 1 MiB, validates runtime arguments against the advertised strict schemas, ignores call notifications, and caps work at eight concurrent requests.
+Claude can call these autonomously when it needs current information. Each call spends against your xAI quota, can run up to 15 minutes, and does not ask for confirmation. The server implements the MCP `2025-11-25` stdio framing, rejects messages above 1 MiB, validates runtime arguments against the advertised strict schemas, ignores call notifications, and caps work at eight concurrent requests.
 
 ## Configuration
 

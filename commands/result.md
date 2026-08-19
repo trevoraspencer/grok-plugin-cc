@@ -2,7 +2,7 @@
 description: Print the captured output of a finished Grok background job
 argument-hint: '<job-id>'
 disable-model-invocation: true
-allowed-tools: Bash(node:*)
+allowed-tools: Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/grok.mjs *)
 ---
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/grok.mjs" result "$ARGUMENTS"`

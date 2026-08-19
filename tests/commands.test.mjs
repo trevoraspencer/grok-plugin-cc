@@ -6,13 +6,15 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+const DISPATCHER_BASH = "Bash(node ${CLAUDE_PLUGIN_ROOT}/scripts/grok.mjs *)";
+
 const COMMANDS = [
-  { name: "ask", disablesModel: true, requiredTools: ["Bash(node:*)"], dispatcher: "ask" },
-  { name: "review", disablesModel: true, requiredTools: ["Bash(node:*)", "Bash(git:*)"], dispatcher: "review" },
-  { name: "status", disablesModel: true, requiredTools: ["Bash(node:*)"], dispatcher: "status" },
-  { name: "result", disablesModel: true, requiredTools: ["Bash(node:*)"], dispatcher: "result" },
-  { name: "cancel", disablesModel: true, requiredTools: ["Bash(node:*)"], dispatcher: "cancel" },
-  { name: "setup", disablesModel: false, requiredTools: ["Bash(node:*)"], dispatcher: "setup" }
+  { name: "ask", disablesModel: true, requiredTools: [DISPATCHER_BASH], dispatcher: "ask" },
+  { name: "review", disablesModel: true, requiredTools: [DISPATCHER_BASH], dispatcher: "review" },
+  { name: "status", disablesModel: true, requiredTools: [DISPATCHER_BASH], dispatcher: "status" },
+  { name: "result", disablesModel: true, requiredTools: [DISPATCHER_BASH], dispatcher: "result" },
+  { name: "cancel", disablesModel: true, requiredTools: [DISPATCHER_BASH], dispatcher: "cancel" },
+  { name: "setup", disablesModel: false, requiredTools: [DISPATCHER_BASH], dispatcher: "setup" }
 ];
 
 function commandText(name) {
@@ -64,6 +66,20 @@ test("commands: review remains read-only and refuses to act on findings", () => 
   assert.ok(text.includes("READ-ONLY"));
   assert.ok(text.includes("Do not fix issues, apply patches, edit files"));
   assert.ok(text.includes("Do not act on any issue Grok raises"));
+  assert.ok(text.includes("sent to xAI"));
+});
+
+test("commands: ask and review deny write tools and do not pre-approve node -e or git", () => {
+  for (const name of ["ask", "review"]) {
+    const fm = frontmatter(commandText(name));
+    assert.match(fm, /^disallowed-tools:\s+.*\bEdit\b/m, `${name} should deny Edit`);
+    assert.match(fm, /^disallowed-tools:\s+.*\bWrite\b/m, `${name} should deny Write`);
+    assert.match(fm, /^disallowed-tools:\s+.*\bNotebookEdit\b/m, `${name} should deny NotebookEdit`);
+    const allowed = fm.match(/^allowed-tools:\s*(.+)$/m)?.[1] ?? "";
+    assert.equal(allowed.includes("Bash(node:*)"), false, `${name} should not pre-approve every node command`);
+    assert.equal(allowed.includes("Bash(git:*)"), false, `${name} should not pre-approve git`);
+  }
+  assert.match(frontmatter(commandText("review")), /^disallowed-tools:\s+.+\bBash\(git:\*\)/m);
 });
 
 test("commands: ask documents live search defaults and overrides", () => {
@@ -118,6 +134,10 @@ test("commands: setup keeps auth guidance secret-safe and curl-based", () => {
   assert.match(text, /do NOT suggest `npm install`/i);
   assert.ok(text.includes("Never print the key value"));
   assert.ok(text.includes("missing auth and an old Node version are reported as warnings"));
+  assert.ok(text.includes('setup "$ARGUMENTS"'));
+  assert.equal(text.includes("setup $ARGUMENTS"), false);
+  assert.ok(text.includes("--offline"));
+  assert.ok(text.includes("models check fails"));
 });
 
 test("commands: status/result/cancel preserve verbatim job plumbing output", () => {

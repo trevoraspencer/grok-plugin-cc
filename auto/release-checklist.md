@@ -32,8 +32,8 @@ Use this checklist before tagging or publishing `grok-plugin-cc`. It is scoped t
 
 ## Packaging Gates
 
-- Confirm `.claude-plugin/plugin.json` has the intended plugin name, version, description, author, license, and homepage.
-- Confirm `.claude-plugin/marketplace.json` points the `grok` plugin at `./`.
+- Confirm `.claude-plugin/plugin.json` has the intended plugin name, version, description, author, license, homepage, and `defaultEnabled: false`.
+- Confirm `.claude-plugin/marketplace.json` points the `grok` plugin at `./` and also sets `defaultEnabled: false`.
 - Confirm `.mcp.json` references `${CLAUDE_PLUGIN_ROOT}/scripts/mcp-server.mjs`.
 - Confirm `README.md` install instructions mention both GitHub marketplace install and local clone install.
 - Confirm `LICENSE` is present and `package.json` license is `MIT`.

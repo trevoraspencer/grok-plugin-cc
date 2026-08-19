@@ -6,5 +6,6 @@
     "name": "Trevor Spencer"
   },
   "license": "MIT",
-  "homepage": "https://github.com/trevoraspencer/grok-plugin-cc"
+  "homepage": "https://github.com/trevoraspencer/grok-plugin-cc",
+  "defaultEnabled": false
 }

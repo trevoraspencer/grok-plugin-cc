@@ -132,5 +132,5 @@ export function buildSetupReport({
   }
 
   const ok = cliOk && grokVersionOk && authOk && nodeOk && modelsOk;
-  return { ok, cliOk, verdict: ok ? "OK" : "issues found", checks, nextSteps };
+  return { ok, cliOk, modelsOk, verdict: ok ? "OK" : "issues found", checks, nextSteps };
 }

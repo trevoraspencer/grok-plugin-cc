@@ -24,7 +24,7 @@ export const TOOLS = [
   {
     name: "grok_search",
     description:
-      "Search the live web/X with Grok and return a synthesized answer with inline citations. Use this when you need current, real-time information that may be newer than your training data.",
+      "Search the live web/X with Grok and return a synthesized answer with inline citations. Use this when you need current, real-time information that may be newer than your training data. Each call spends against the user's xAI quota, can run up to 15 minutes, and does not ask for confirmation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -47,7 +47,7 @@ export const TOOLS = [
   {
     name: "grok_ask",
     description:
-      "Ask Grok a one-shot question. Live web search follows the plugin's web_search setting unless the call overrides it with search=true or search=false.",
+      "Ask Grok a one-shot question. Live web search follows the plugin's web_search setting unless the call overrides it with search=true or search=false. Each call spends against the user's xAI quota, can run up to 15 minutes, and does not ask for confirmation.",
     inputSchema: {
       type: "object",
       properties: {
